@@ -25,3 +25,25 @@ I reviewed the Phase 1 code against the installed Pipecat 1.12.0 source. Each ro
 Not changed:
 - **Interruption of the closing line:** the customer can still barge into the closing line. `EndWorkerFrame` is non-interruptible, so the call still ends (DNC is honoured).
 - **Voice transcript timestamps:** these are synthetic (start + 1 s per turn), because Pipecat's context messages carry no timestamps.
+
+# Independent review (fresh-clone reviewer subagent, after the build)
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| R1 | blocker | `.gitignore` patterns `results/` and `report.html` also matched `demo/`, so the demo data was never committed. `make demo-report`, 3 tests and CI failed on a fresh clone. | Anchored patterns (`/results/`, `/report.html`); demo data committed. |
+| R2 | major | Errored calls (bad key, network) were scored. They counted as disclosure violations and gave red-team attacks a free "pass". | Errored transcripts are excluded from scoring and post-call, and listed in `Summary.errored_calls` and the report header. |
+| R3 | major | Re-simulated calls kept stale post-call records and scores. | Both are rebuilt when the transcript is newer than the output. |
+| R4 | major | A `--no-judge` score was never upgraded once a key was available. | With the judge available, any score without judge results is re-scored. |
+| R5 | major | `make eval` treated a simulator crash (exit 1) as "some calls errored" and built an empty report. | Errored calls exit 3; anything else non-zero stops the pipeline; a bad persona selection exits 2. |
+| R6 | major | `tts_ttfb_ms` could take the STT's TTFB ("STTService" contains "TTS"). | Match the class-name suffix; the test now has STT slower than TTS. |
+| R7 | minor | The report mixed voice latency from all prompt versions. | Latency is filtered by `--version`. |
+| R8 | minor | One truncated latency line crashed the report. | Bad lines are skipped with a warning. |
+| R9 | minor | `make compare`/`report` hard-coded `results/` and `logs/latency.jsonl`. | The Makefile reads both paths from config. |
+| R10 | minor | The A/B per-persona outcome used an arbitrary repeat while the label said "first". | Uses the most common outcome across repeats (natural repeat order); label fixed. |
+| R11 | minor | README underestimated full-run time. | Corrected (2–4 h at 8 rpm), with a smoke-run suggestion. |
+| R12 | minor | Redaction missed spaced-out digits, card numbers and spaced PAN. | Added; README now says redaction is best-effort. |
+| R13 | minor | Agent and customer didn't retry network errors; the SDK's own retries bypassed the limiter. | Connection errors are retried; `max_retries=0` on the client. |
+| R14 | minor | No test imported `voice/bot.py`. | `tests/test_voice_bot.py` covers service construction, barge-in config and the DNC hang-up frame order. |
+| nits | | `make help` gaps; `judge_model` set when the judge never ran; CLI prog names; scorer missing the "DND" cue; hard-coded "25 personas" in the report footer. | All fixed. |
+
+The reviewer also confirmed that `LLMContext.get_messages()` returns the live list, so MoodTagger's in-place edit persists. That closes a VERIFY item.

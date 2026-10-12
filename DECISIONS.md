@@ -20,7 +20,7 @@ Items marked `VERIFY` need a live run with real keys. AUDIT.md lists the bugs fi
 - Closing lines are fixed text in the brain, spoken via `TTSSpeakFrame` before `EndWorkerFrame` — the DNC confirmation is always said and a call never ends in silence (AUDIT #1).
 - Barge-in needs at least 2 words while the bot is speaking (`MinWordsUserTurnStartStrategy`) — "haan" / "hmm" / noise must not cut the agent off. `interrupt_min_words: 0` restores Pipecat's VAD default.
 - The customer is muted until the first bot utterance completes and during tool calls — the disclosure is always heard in full, and a barge-in can't cancel consent or hang-up.
-- Mood is tagged on the context message (MoodTagger processor), not on the transcription frame — the browser transcript stays clean while the LLM sees the same tag as in text mode. `VERIFY` that the in-place context edit persists.
+- Mood is tagged on the context message (MoodTagger processor), not on the transcription frame — the browser transcript stays clean while the LLM sees the same tag as in text mode. The in-place edit persists (verified in source: `get_messages()` returns the live list).
 - Voice transcripts are rebuilt from the LLM context at call end, with synthetic timestamps — Pipecat context messages carry no times; it's simple and needs no extra processor.
 - Post-call records are written in a `finally` after `runner.run()` — covers both bot hang-up and customer disconnect.
 - Opening cue is a user-role message in both modes — DeepSeek has no `developer` role.
@@ -40,7 +40,10 @@ Items marked `VERIFY` need a live run with real keys. AUDIT.md lists the bugs fi
 - One shared limiter spaces requests evenly (60/rpm s) across agent and customer — steady traffic is less likely to hit 429s than bursts.
 - Calls run one at a time — the rate limit is the bottleneck anyway, and it keeps things simple.
 - Resume is decided by the transcripts on disk (valid and not `error`); `sim_state.json` is only a log — a single source of truth.
-- Errors still write the transcript with `stop_reason: error`, and `make eval` continues past them — no lost evidence; re-running resumes the failed calls.
+- Errors still write the transcript with `stop_reason: error`, the simulator exits 3, and `make eval` continues — no lost evidence; re-running resumes the failed calls. Exit 2 (setup) or a crash stops the pipeline.
+- Errored calls are excluded from scoring, post-call and the summary, and listed in `errored_calls` — a crashed call says nothing about the agent.
+- Post-call records and scores are rebuilt when the transcript is newer — re-simulated calls never keep stale results.
+- The openai client is built with `max_retries=0`; our own loops retry 429/5xx/network errors behind the rate limiter — no hidden bursts.
 - The customer LLM replies are capped at 150 tokens, it hangs up with a bare `<hangup>`, and the hang-up is not recorded as a turn — short spoken replies and clean transcripts.
 
 ## Scoring
@@ -64,7 +67,10 @@ Items marked `VERIFY` need a live run with real keys. AUDIT.md lists the bugs fi
 - One static HTML file with inline CSS/SVG and no JavaScript — works offline and from disk, with nothing to load from outside.
 - Percentiles use linear interpolation (numpy type 7) written by hand; greetings are excluded — no numpy dependency, and greetings are timed from connect, not from speech.
 - In the A/B view, a lower DNC share is not treated as better — honouring stop requests is correct behaviour.
+- The per-persona A/B outcome is the most common outcome across repeats; violations are summed — stable with `--repeats`.
+- Voice latency in a report is filtered to that prompt version — A/B latency compares like with like.
+- The demo report is pinned to the data timestamp — the committed file doesn't change on rebuild.
 - `demo/` is synthetic data, deterministic and clearly labelled (`demo-` ids, `-demo` models, `[demo]` text, a banner) — so anyone can see the report without keys, and it can't be mistaken for real results.
 
 ## Not verified (needs live keys or a browser)
-DeepSeek model ids and JSON mode alongside the thinking setting; Deepgram `multi` on Hinglish; Sarvam pronunciation; the goodbye audio playing fully before hang-up; MoodTagger's context edit persisting; real latency numbers; how the simulated customers behave; the report in a real browser.
+DeepSeek model ids and JSON mode alongside the thinking setting; Deepgram `multi` on Hinglish; Sarvam pronunciation; the goodbye audio playing fully before hang-up (and the closing line reaching the voice transcript); real latency numbers; how the simulated customers behave; the report in a real browser.
