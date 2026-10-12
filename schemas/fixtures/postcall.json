@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "call_id": "fx000001",
+  "mode": "text",
+  "prompt_version": "v1",
+  "persona_id": "rate_shopper",
+  "created_at": 1791800061.0,
+  "disposition": "interested_callback",
+  "objections": [
+    "rate_too_high"
+  ],
+  "sentiment_trajectory": [
+    "calm",
+    "calm",
+    "interested",
+    "calm"
+  ],
+  "final_sentiment": "calm",
+  "consent_status": "given",
+  "next_action": "executive_callback",
+  "callback_time": "tomorrow 18:00",
+  "dnc": false,
+  "turns": 9,
+  "summary": "Customer objected to the rate, consented to an executive call; callback booked for tomorrow 18:00."
+}

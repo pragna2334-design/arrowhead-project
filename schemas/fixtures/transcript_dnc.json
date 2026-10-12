@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "call_id": "fx000002",
+  "mode": "text",
+  "prompt_version": "v1",
+  "agent_model": "deepseek-flash",
+  "persona_id": "angry_number_source",
+  "customer_name": "Rahul Verma",
+  "started_at": 1791800100.0,
+  "ended_at": 1791800160.0,
+  "stop_reason": "agent_ended",
+  "error": null,
+  "turns": [
+    {
+      "role": "agent",
+      "text": "Namaste! Main Priya bol rahi hoon, Vriddhi Finance ki AI assistant. Kya meri baat Rahul Verma ji se ho rahi hai?",
+      "ts": 1791800100.0,
+      "sentiment": null
+    },
+    {
+      "role": "customer",
+      "text": "Mera number kahan se mila? Mujhe dobara call mat karo, pareshan kar diya hai.",
+      "ts": 1791800104.0,
+      "sentiment": "annoyed"
+    },
+    {
+      "role": "agent",
+      "text": "Bilkul, maaf kijiye. Aapka number hamari calling list se hata diya gaya hai, ab aapko hamari taraf se call nahi aayega. Dhanyavaad.",
+      "ts": 1791800108.0,
+      "sentiment": null
+    }
+  ],
+  "tool_calls": [
+    {
+      "name": "mark_do_not_call",
+      "args": {},
+      "result": {
+        "ok": true
+      },
+      "turn_index": 1
+    }
+  ],
+  "final_state": {
+    "consent": null,
+    "callback_time": null,
+    "dnc": true,
+    "ended": true,
+    "end_reason": "dnc"
+  }
+}
