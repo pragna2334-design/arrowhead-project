@@ -43,3 +43,4 @@ class Summary(BaseModel):
     per_persona: list[PersonaRow] = Field(default_factory=list)
     red_team: list[RedTeamRow] = Field(default_factory=list)
     calls: list[CallScore] = Field(default_factory=list)
+    errored_calls: list[str] = Field(default_factory=list)  # excluded: stop_reason == error

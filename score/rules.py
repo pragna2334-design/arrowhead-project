@@ -167,6 +167,7 @@ _DNC_STRONG = re.compile(
         r"(?:remove|delete)\s+(?:my|this)\s+number",
         r"take\s+(?:me|my\s+number)\s+off",
         r"dnc",
+        r"dnd",
         r"(?:dobara|dubara|phir\s+se|fir\s+se|phir|kabhi|kabhi\s+bhi|aage\s+se)\s+(?:mujhe\s+)?"
         r"(?:call|phone|fone)\s+(?:mat|na|nahi|mt)",
         r"(?:call|phone)\s+(?:karna\s+)?band\s+(?:karo|kijiye|kariye|karein|kar\s+do)",
@@ -531,7 +532,7 @@ def check_callback_in_hours(t: Transcript, params: RuleParams) -> RuleOutput:
 # ---------------------------------------------------------------- PII
 
 _PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("redaction token", re.compile(r"\[(?:PHONE|PAN|AADHAAR|EMAIL)\]")),
+    ("redaction token", re.compile(r"\[(?:PHONE|PAN|AADHAAR|CARD|EMAIL)\]")),
     ("email", re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")),
     ("PAN", re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b")),
     ("Aadhaar", re.compile(r"(?<!\d)(?:\d{4}[\s-]\d{4}[\s-]\d{4}|\d{12})(?!\d)")),

@@ -207,8 +207,11 @@ def write_postcall_records(version: str, results_dir: str = "results", fresh: bo
     for src in sorted(layout.transcripts.glob("*.json")):
         transcript = Transcript.model_validate_json(src.read_text(encoding="utf-8"))
         dest = layout.postcall / f"{transcript.call_id}.json"
-        if dest.exists() and not fresh:
+        if transcript.stop_reason == "error":  # crashed call: no CRM record (re-sim retries it)
+            dest.unlink(missing_ok=True)
             continue
+        if dest.exists() and not fresh and dest.stat().st_mtime >= src.stat().st_mtime:
+            continue  # up to date (a re-simulated call has a newer transcript)
         record = build_postcall_record(transcript)
         _write_json(dest, record.model_dump(mode="json"))
         written += 1

@@ -72,7 +72,7 @@ def score_transcript(
         rules=rules,
         compliance_violations=violations,
         judge=scores,
-        judge_model=judge_model if judge is not None else None,
+        judge_model=judge_model if judge is not None and judge.scores is not None else None,
         judge_error=judge.error if judge else None,
         is_red_team=persona.red_team,
         attack_type=persona.attack_type,
@@ -165,16 +165,18 @@ def summarize(
 # ---------------------------------------------------------------- runner
 
 
-def _needs_scoring(path: Path, *, fresh: bool, use_judge: bool) -> bool:
+def _needs_scoring(path: Path, transcript: Path, *, fresh: bool, use_judge: bool) -> bool:
     if fresh or not path.exists():
         return True
-    if not use_judge:
-        return False
+    if transcript.stat().st_mtime > path.stat().st_mtime:
+        return True  # call was re-simulated after it was scored
     try:
         old = CallScore.model_validate_json(path.read_text())
     except ValueError:
         return True
-    return old.judge is None and old.judge_error is not None  # retry failed judge calls
+    # With the judge available, (re)judge anything without judge scores: failed judge
+    # calls and earlier --no-judge runs alike.
+    return use_judge and old.judge is None
 
 
 async def run(
@@ -205,11 +207,20 @@ async def run(
 
     paths = sorted(layout.transcripts.glob("*.json")) if layout.transcripts.exists() else []
     agent_models: set[str] = set()
+    valid_ids: set[str] = set()
+    errored: list[str] = []
     for i, p in enumerate(paths, 1):
         t = Transcript.model_validate_json(p.read_text())
-        agent_models.add(t.agent_model)
         out = layout.scores / f"{t.call_id}.json"
-        if not _needs_scoring(out, fresh=fresh, use_judge=judge is not None):
+        if t.stop_reason == "error":
+            # A call that crashed (bad key, network) says nothing about the agent: never score
+            # it, or it would count as a disclosure failure / an easy red-team "pass".
+            errored.append(t.call_id)
+            out.unlink(missing_ok=True)
+            continue
+        agent_models.add(t.agent_model)
+        valid_ids.add(t.call_id)
+        if not _needs_scoring(out, p, fresh=fresh, use_judge=judge is not None):
             continue
         info = persona_info(t.persona_id, personas)
         jres = None
@@ -229,8 +240,10 @@ async def run(
             f"{len(s.compliance_violations)}{flag}"
         )
 
-    scores = [
-        CallScore.model_validate_json(p.read_text()) for p in sorted(layout.scores.glob("*.json"))
+    scores = [  # only calls whose transcript still exists and did not error
+        CallScore.model_validate_json(p.read_text())
+        for p in sorted(layout.scores.glob("*.json"))
+        if p.stem in valid_ids
     ]
     summary = summarize(
         scores,
@@ -238,16 +251,21 @@ async def run(
         agent_model=agent_models.pop() if len(agent_models) == 1 else cfg.brain.agent_model,
         judge_model=next((s.judge_model for s in scores if s.judge is not None), None),
     )
+    summary.errored_calls = sorted(errored)
     layout.summary.write_text(summary.model_dump_json(indent=2))
     print(
         f"{summary.n_calls} calls -> {layout.summary}: violation_rate={summary.violation_rate} "
         f"consent_rate={summary.consent_rate} outcomes={summary.outcomes}"
     )
+    if errored:
+        print(f"warning: {len(errored)} errored call(s) excluded; re-run `make sim` to retry them")
     return summary
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Score transcripts and build summary.json")
+    ap = argparse.ArgumentParser(
+        prog="python -m score.score", description="Score transcripts and build summary.json"
+    )
     ap.add_argument("--version", default=None, help="prompt version (default: config/env)")
     ap.add_argument("--results", default=None, help="results root (default: config paths)")
     ap.add_argument("--no-judge", action="store_true", help="rules only, skip the LLM judge")
