@@ -21,7 +21,9 @@ run-voice:  ## browser voice bot at http://localhost:7860/client (PROMPT=v2 to s
 	PROMPT_VERSION=$(PROMPT) $(PY) -m voice.bot -t webrtc
 
 sim:  ## text-mode simulator -> results/$(PROMPT)/transcripts (resumable)
-	$(PY) -m sim.simulate --version $(PROMPT) $(ARGS)
+	@$(PY) -m sim.simulate --version $(PROMPT) $(ARGS); s=$$?; \
+	if [ $$s -eq 1 ]; then echo "warning: some calls errored; re-run 'make sim' to resume them"; fi; \
+	[ $$s -ne 2 ]
 
 postcall:  ## CRM records for every transcript -> results/$(PROMPT)/postcall
 	$(PY) -m brain.postcall --version $(PROMPT)
