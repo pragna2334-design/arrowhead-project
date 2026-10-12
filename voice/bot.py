@@ -7,6 +7,7 @@ All prompt / tool / state logic comes from the shared `brain` package.
 from __future__ import annotations
 
 import os
+import time
 import uuid
 
 from dotenv import load_dotenv
@@ -15,7 +16,12 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import EndWorkerFrame, FunctionCallResultProperties, LLMRunFrame
+from pipecat.frames.frames import (
+    EndWorkerFrame,
+    FunctionCallResultProperties,
+    LLMRunFrame,
+    TTSSpeakFrame,
+)
 from pipecat.observers.user_bot_latency_observer import UserBotLatencyObserver
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -35,15 +41,29 @@ from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.turns.user_mute.function_call_user_mute_strategy import FunctionCallUserMuteStrategy
+from pipecat.turns.user_mute.mute_until_first_bot_complete_user_mute_strategy import (
+    MuteUntilFirstBotCompleteUserMuteStrategy,
+)
+from pipecat.turns.user_start.min_words_user_turn_start_strategy import (
+    MinWordsUserTurnStartStrategy,
+)
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
 from brain.config import AppConfig, load_config
+from brain.postcall import write_voice_records
 from brain.prompt import OPENING_CUE, build_system_prompt
+from brain.redact import install_log_redaction
 from brain.state import CallState
-from brain.tools import TERMINAL_TOOLS, TOOL_SPECS, execute_tool
+from brain.tools import TERMINAL_TOOLS, TOOL_SPECS, closing_line, execute_tool
+from brain.transcript import to_transcript
+from voice.context import context_to_turns
 from voice.latency import attach_latency_logging
+from voice.mood import MoodTagger
 
 load_dotenv(override=True)
+install_log_redaction()  # every log line passes through PII redaction
 
 # Deferred so only the selected transport's params are built. Browser/WebRTC only.
 transport_params = {
@@ -115,40 +135,83 @@ def make_tools_schema() -> ToolsSchema:
     )
 
 
-def make_tool_handler(state: CallState, name: str):
+def make_tool_handler(state: CallState, name: str, cfg: AppConfig):
     async def handler(params: FunctionCallParams):
-        result = execute_tool(state, name, params.arguments)
-        if name in TERMINAL_TOOLS:
-            # The agent already said goodbye in the same reply; do not ask the LLM for more.
+        was_ended = state.ended
+        result = execute_tool(
+            state, name, params.arguments, callback_hours=cfg.brain.callback_hours
+        )
+        if state.tool_calls:  # turn index in the spoken conversation (for the transcript)
+            state.tool_calls[-1].turn_index = (
+                len(context_to_turns(params.context.get_messages())) - 1
+            )
+        if name in TERMINAL_TOOLS and state.ended and not was_ended:
+            # Deterministic closing line (same as text mode), then a graceful hang-up.
+            # Ordering: TTSSpeakFrame and EndWorkerFrame both travel downstream from the LLM;
+            # the worker turns EndWorkerFrame into an EndFrame queued behind the speech, and
+            # the output transport drains queued audio before stopping.
             await params.result_callback(
                 result, properties=FunctionCallResultProperties(run_llm=False)
             )
-            # VERIFY (needs live run): pushed downstream so queued TTS audio flushes first.
+            await params.llm.push_frame(TTSSpeakFrame(closing_line(state)))
             await params.llm.push_frame(EndWorkerFrame(reason=state.end_reason))
+        elif name in TERMINAL_TOOLS:
+            # Duplicate end request in the same response: acknowledge, never speak twice.
+            await params.result_callback(
+                result, properties=FunctionCallResultProperties(run_llm=False)
+            )
         else:
             await params.result_callback(result)
 
     return handler
 
 
+def build_user_params(cfg: AppConfig) -> LLMUserAggregatorParams:
+    """VAD + barge-in tuning.
+
+    - Barge-in: while the bot speaks, the customer must say >= interrupt_min_words words
+      (interim STT) to interrupt, so "haan", "hmm" or a cough do not cut the agent off.
+      When the bot is silent one word starts a turn. interrupt_min_words: 0 -> Pipecat
+      defaults (VAD-triggered interruption).
+    - Mute the customer until the first bot utterance completes (the AI + lender disclosure
+      is always heard in full) and during tool calls (so a barge-in cannot cancel
+      record_consent / book_callback / end_call mid-flight).
+    """
+    min_words = int(cfg.voice.get("interrupt_min_words", 2))
+    strategies = (
+        UserTurnStrategies(start=[MinWordsUserTurnStartStrategy(min_words=min_words)])
+        if min_words > 0
+        else UserTurnStrategies()
+    )
+    return LLMUserAggregatorParams(
+        vad_analyzer=SileroVADAnalyzer(
+            params=VADParams(
+                start_secs=float(cfg.voice.get("vad_start_secs", 0.2)),
+                stop_secs=float(cfg.voice["vad_stop_secs"]),
+            )
+        ),
+        user_turn_strategies=strategies,
+        user_mute_strategies=[
+            MuteUntilFirstBotCompleteUserMuteStrategy(),
+            FunctionCallUserMuteStrategy(),
+        ],
+    )
+
+
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
-    cfg = load_config(os.getenv("CONFIG_PATH"))
+    cfg = load_config()
     customer = cfg.brain.default_customer_name
-    state = CallState(call_id=uuid.uuid4().hex[:8], customer_name=customer)
-    logger.info(f"Starting call {state.call_id} with {customer}")
+    state = CallState(call_id=f"voice-{uuid.uuid4().hex[:8]}", customer_name=customer)
+    started_at = time.time()
+    logger.info(f"Starting call {state.call_id} (prompt {cfg.brain.prompt_version})")
 
     stt, tts, llm = build_stt(cfg), build_tts(cfg), build_llm(cfg, customer)
     for spec in TOOL_SPECS:
-        llm.register_function(spec.name, make_tool_handler(state, spec.name))
+        llm.register_function(spec.name, make_tool_handler(state, spec.name, cfg))
 
     context = LLMContext(tools=make_tools_schema())
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
-        context,
-        user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(
-                params=VADParams(stop_secs=float(cfg.voice["vad_stop_secs"]))
-            )
-        ),
+        context, user_params=build_user_params(cfg)
     )
 
     pipeline = Pipeline(
@@ -156,6 +219,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             transport.input(),
             stt,
             user_aggregator,
+            MoodTagger(state),  # same mood tag as text mode, before the LLM sees the turn
             llm,
             tts,
             transport.output(),
@@ -164,7 +228,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     )
 
     latency_observer = UserBotLatencyObserver()
-    attach_latency_logging(latency_observer, state.call_id, cfg.voice["latency_log"])
+    attach_latency_logging(
+        latency_observer, state.call_id, cfg.voice["latency_log"], cfg.brain.prompt_version
+    )
 
     worker = PipelineWorker(
         pipeline,
@@ -183,13 +249,31 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        logger.info(
-            f"Client disconnected: consent={state.consent} callback={state.callback_time} "
-            f"dnc={state.dnc} end_reason={state.end_reason}"
-        )
+        logger.info("Client disconnected")
         await runner.cancel()
 
-    await runner.run()
+    try:
+        await runner.run()
+    finally:
+        write_postcall(state, context, cfg, started_at)
+
+
+def write_postcall(state: CallState, context: LLMContext, cfg: AppConfig, started_at: float):
+    """Persist the redacted transcript + CRM record for this voice call (never raises)."""
+    try:
+        state.turns = context_to_turns(context.get_messages(), started_at=started_at)
+        transcript = to_transcript(
+            state,
+            mode="voice",
+            prompt_version=cfg.brain.prompt_version,
+            agent_model=cfg.brain.agent_model,
+            started_at=started_at,
+            stop_reason="agent_ended" if state.ended else "customer_hung_up",
+        )
+        paths = write_voice_records(transcript, cfg.voice.get("calls_dir", "logs/calls"))
+        logger.info(f"Post-call records: {', '.join(str(p) for p in paths)}")
+    except Exception as e:  # noqa: BLE001 - a failed write must not crash the runner
+        logger.error(f"Post-call record failed for {state.call_id}: {e}")
 
 
 async def bot(runner_args: RunnerArguments):

@@ -17,6 +17,8 @@ from typing import Any
 
 from pipecat.observers.user_bot_latency_observer import LatencyBreakdown, MeasuredFrom
 
+from schemas import LatencyRecord
+
 # Contribution keys that are NOT part of "STT final -> first TTS audio".
 _OUTSIDE_PIPELINE = {"endpointing_wait", "transcription", "first_request", "output_transport"}
 
@@ -25,7 +27,9 @@ def _ms(secs: float | None) -> float | None:
     return None if secs is None else round(secs * 1000, 1)
 
 
-def breakdown_to_record(b: LatencyBreakdown, call_id: str, turn: int) -> dict[str, Any]:
+def breakdown_to_record(
+    b: LatencyBreakdown, call_id: str, turn: int, prompt_version: str | None = None
+) -> dict[str, Any]:
     by_key: dict[str, float] = {}
     for c in b.contributions:
         by_key[c.key] = by_key.get(c.key, 0.0) + c.duration_secs
@@ -37,6 +41,7 @@ def breakdown_to_record(b: LatencyBreakdown, call_id: str, turn: int) -> dict[st
     pipeline = sum(v for k, v in by_key.items() if k not in _OUTSIDE_PIPELINE)
     return {
         "call_id": call_id,
+        "prompt_version": prompt_version,
         "turn": turn,
         "ts": time.time(),
         "kind": "greeting" if b.measured_from is MeasuredFrom.CLIENT_CONNECTED else "turn",
@@ -49,7 +54,9 @@ def breakdown_to_record(b: LatencyBreakdown, call_id: str, turn: int) -> dict[st
     }
 
 
-def attach_latency_logging(observer: Any, call_id: str, path: str | Path) -> None:
+def attach_latency_logging(
+    observer: Any, call_id: str, path: str | Path, prompt_version: str | None = None
+) -> None:
     """Register an on_latency_breakdown handler that appends one JSON line per bot turn."""
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -58,6 +65,7 @@ def attach_latency_logging(observer: Any, call_id: str, path: str | Path) -> Non
     @observer.event_handler("on_latency_breakdown")
     async def _on_breakdown(_observer, breakdown: LatencyBreakdown):
         counter["turn"] += 1
-        record = breakdown_to_record(breakdown, call_id, counter["turn"])
+        record = breakdown_to_record(breakdown, call_id, counter["turn"], prompt_version)
+        LatencyRecord.model_validate(record)  # frozen contract
         with out.open("a") as f:  # noqa: ASYNC230 - one tiny append per turn
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
