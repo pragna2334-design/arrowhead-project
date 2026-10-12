@@ -44,7 +44,9 @@ def gemini_tools() -> list[types.Tool]:
             else None
         )
         decls.append(
-            types.FunctionDeclaration(name=spec.name, description=spec.description, parameters=params)
+            types.FunctionDeclaration(
+                name=spec.name, description=spec.description, parameters=params
+            )
         )
     return [types.Tool(function_declarations=decls)]
 
@@ -122,7 +124,7 @@ class AgentBrain:
                 return await self._client.aio.models.generate_content(
                     model=self.cfg.agent_model, contents=self._contents, config=self._config
                 )
-            except Exception as e:  # noqa: BLE001 - only retry rate limits / transient 5xx
+            except Exception as e:  # only retry rate limits / transient 5xx
                 code = getattr(e, "code", None)
                 if delay is None or code not in (429, 500, 503):
                     raise
