@@ -15,11 +15,11 @@ brain:
   agent_name: "Aarav"
   script: roman                      # roman | devanagari  (script the LLM writes Hindi in)
   # Models are pinned explicitly; we never rely on a library default.
-  agent_model: "gemini-3.6-flash"    # VERIFY: model id available on your key
-  judge_model: "gemini-3.8-flash"    # VERIFY: must differ from agent_model (self-grading bias)
+  agent_model: "deepseek-flash"      # VERIFY: current DeepSeek name for V4.1 Flash (per Pipecat 1.12.0)
+  judge_model: "deepseek-pro"        # VERIFY: model id on your key; must differ from agent_model
   temperature: 0.4
   max_output_tokens: 300
-  thinking_level: "low"              # voice needs low latency; "low" is accepted by both models
+  thinking: "disabled"               # enabled | disabled. Disabled: V4 models otherwise reason first (slow TTFB)
   max_tool_rounds: 3
 
 stt:

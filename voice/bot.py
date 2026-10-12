@@ -1,4 +1,4 @@
-"""Pipecat voice pipeline: browser mic (SmallWebRTC) -> STT -> Gemini (brain) -> TTS -> browser.
+"""Pipecat voice pipeline: browser mic (SmallWebRTC) -> STT -> DeepSeek (brain) -> TTS -> browser.
 
 Run:  python -m voice.bot -t webrtc      then open http://localhost:7860/client
 All prompt / tool / state logic comes from the shared `brain` package.
@@ -28,8 +28,8 @@ from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
+from pipecat.services.deepseek.llm import DeepSeekLLMService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.sarvam.tts import SarvamTTSService
@@ -92,14 +92,14 @@ def build_tts(cfg: AppConfig):
 
 def build_llm(cfg: AppConfig, customer_name: str):
     b = cfg.brain
-    return GoogleLLMService(
-        api_key=os.environ["GOOGLE_API_KEY"],
-        settings=GoogleLLMService.Settings(
+    return DeepSeekLLMService(
+        api_key=os.environ["DEEPSEEK_API_KEY"],
+        settings=DeepSeekLLMService.Settings(
             model=b.agent_model,  # pinned in config.yaml, never Pipecat's default
             system_instruction=build_system_prompt(b, customer_name),
             temperature=b.temperature,
             max_tokens=b.max_output_tokens,
-            thinking=GoogleLLMService.ThinkingConfig(thinking_level=b.thinking_level),
+            thinking=DeepSeekLLMService.ThinkingConfig(type=b.thinking),
         ),
     )
 

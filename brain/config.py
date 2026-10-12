@@ -27,7 +27,7 @@ class BrainConfig:
     judge_model: str
     temperature: float
     max_output_tokens: int
-    thinking_level: str
+    thinking: str  # "enabled" | "disabled"
     max_tool_rounds: int
     default_customer_name: str
 
@@ -60,7 +60,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         judge_model=b["judge_model"],
         temperature=float(b["temperature"]),
         max_output_tokens=int(b["max_output_tokens"]),
-        thinking_level=b["thinking_level"],
+        thinking=b["thinking"],
         max_tool_rounds=int(b["max_tool_rounds"]),
         default_customer_name=raw["customer_default"]["name"],
     )
