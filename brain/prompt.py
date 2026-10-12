@@ -51,4 +51,8 @@ def build_system_prompt(cfg: BrainConfig, customer_name: str, version: str | Non
         gender_rule=gender_rule,
         callback_start=cfg.callback_hours[0],
         callback_end=cfg.callback_hours[1],
+        opening_example=(
+            f"Namaste, main {cfg.agent_name} {verb}, {cfg.lender_name} ki taraf se AI assistant. "
+            f"Kya meri baat {customer_name} ji se ho rahi hai?"
+        ),
     )
