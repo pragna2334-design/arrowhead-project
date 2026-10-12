@@ -273,7 +273,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     ids = [s.strip() for s in args.personas.split(",") if s.strip()] if args.personas else None
     n = args.n if args.n is not None else app.sim.get("persona_count")
-    personas = select_personas(load_personas(), n, ids)
+    try:
+        personas = select_personas(load_personas(), n, ids)
+    except (ValueError, KeyError, OSError) as e:
+        print(f"bad persona selection: {e}", file=sys.stderr)
+        return 2
     print(
         f"sim {app.brain.prompt_version}: {len(personas)} personas x {args.repeats} "
         f"(rpm={app.sim.get('rpm')}, max_turns={app.sim.get('max_turns')})"
@@ -289,7 +293,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     errors = sum(1 for v in outcome.values() if v == "error")
     print(f"done: {len(outcome)} calls, {errors} errors")
-    return 1 if errors else 0
+    return EXIT_CALLS_ERRORED if errors else 0
+
+
+# Exit codes: 0 ok, 2 setup error (stop the pipeline), 3 some calls errored (others are fine;
+# `make eval` continues and the scorer excludes errored calls). Anything else is a crash.
+EXIT_CALLS_ERRORED = 3
 
 
 if __name__ == "__main__":

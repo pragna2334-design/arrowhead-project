@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from openai import APIStatusError, AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 
 from brain.config import BrainConfig
 from brain.prompt import OPENING_CUE, build_system_prompt
@@ -53,7 +53,10 @@ def openai_tools() -> list[dict[str, Any]]:
 
 
 def make_client() -> AsyncOpenAI:
-    return AsyncOpenAI(api_key=os.environ["DEEPSEEK_API_KEY"], base_url=DEEPSEEK_BASE_URL)
+    # max_retries=0: retries happen in our loops, behind the simulator's rate limiter.
+    return AsyncOpenAI(
+        api_key=os.environ["DEEPSEEK_API_KEY"], base_url=DEEPSEEK_BASE_URL, max_retries=0
+    )
 
 
 class AgentBrain:
@@ -102,6 +105,10 @@ class AgentBrain:
             if msg.content:
                 spoken.append(msg.content)
             assistant: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
+            if self.cfg.thinking == "enabled":
+                # DeepSeek thinking mode rejects assistant turns without reasoning_content after a
+                # tool call; an empty one is accepted (same fix as Pipecat's DeepSeekLLMAdapter).
+                assistant["reasoning_content"] = ""
             if tool_calls:
                 assistant["tool_calls"] = [
                     {
@@ -151,8 +158,14 @@ class AgentBrain:
                     # DeepSeek's own field, sent the same way Pipecat's service sends it.
                     extra_body={"thinking": {"type": self.cfg.thinking}},
                 )
-            except APIStatusError as e:  # only retry rate limits / transient server errors
-                if delay is None or e.status_code not in (429, 500, 502, 503):
+            except (APIStatusError, APIConnectionError) as e:  # rate limits, 5xx, network blips
+                transient = isinstance(e, APIConnectionError) or e.status_code in (
+                    429,
+                    500,
+                    502,
+                    503,
+                )
+                if delay is None or not transient:
                     raise
                 await asyncio.sleep(delay)
         raise AssertionError("unreachable")

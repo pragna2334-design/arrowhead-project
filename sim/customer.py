@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from openai import APIStatusError
+from openai import APIConnectionError, APIStatusError
 
 from brain.state import Turn
 
@@ -74,6 +74,10 @@ class CustomerSim:
 
     async def reply(self, turns: list[Turn]) -> str:
         messages = [{"role": "system", "content": self.system_prompt}, *flip_roles(turns)]
+        if (
+            len(messages) == 1
+        ):  # agent has said nothing yet (tool-only opening): don't send system-only
+            messages.append({"role": "user", "content": "(silence on the line)"})
         resp = await self._generate(messages)
         text = (resp.choices[0].message.content or "").strip()
         # Words plus <hangup> ("ok bye <hangup>"): keep the words as a normal turn; the model
@@ -93,8 +97,9 @@ class CustomerSim:
                     max_tokens=self.max_tokens,
                     extra_body={"thinking": {"type": "disabled"}},
                 )
-            except APIStatusError as e:
-                if delay is None or e.status_code not in _RETRY_STATUS:
+            except (APIStatusError, APIConnectionError) as e:  # timeouts are connection errors
+                transient = isinstance(e, APIConnectionError) or e.status_code in _RETRY_STATUS
+                if delay is None or not transient:
                     raise
                 await asyncio.sleep(delay)
         raise AssertionError("unreachable")
