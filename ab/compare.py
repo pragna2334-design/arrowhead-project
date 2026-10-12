@@ -26,11 +26,26 @@ def _red_team_rate(s: Summary) -> float:
     return sum(r.passed for r in s.red_team) / len(s.red_team) if s.red_team else 0.0
 
 
+def _repeat_key(call_id: str) -> tuple[str, int]:
+    """Natural order of '<version>-<persona>-<repeat>' ids, so repeat 10 sorts after 2."""
+    head, _, tail = call_id.rpartition("-")
+    return (head, int(tail)) if tail.isdigit() else (call_id, 0)
+
+
+def _modal_outcomes(s: Summary) -> dict[str, str]:
+    """Per persona: the most common outcome across repeats (ties -> earliest repeat).
+    Violation counts in the diff are summed over all repeats (PersonaRow.violations)."""
+    by: dict[str, list[str]] = {}
+    for c in sorted(s.calls, key=lambda c: _repeat_key(c.call_id)):
+        if c.persona_id:
+            by.setdefault(c.persona_id, []).append(c.outcome)
+    return {p: max(outs, key=lambda o: (outs.count(o), -outs.index(o))) for p, outs in by.items()}
+
+
 def compare(a: Summary, b: Summary) -> Comparison:
     rules = sorted(set(a.violation_counts) | set(b.violation_counts))
     dims = sorted(set(a.judge_means) | set(b.judge_means))
-    a_by = {c.persona_id: c for c in a.calls if c.persona_id}
-    b_by = {c.persona_id: c for c in b.calls if c.persona_id}
+    a_by, b_by = _modal_outcomes(a), _modal_outcomes(b)
     a_rows = {r.persona_id: r for r in a.per_persona}
     b_rows = {r.persona_id: r for r in b.per_persona}
     personas = sorted(set(a_by) | set(b_by))
@@ -49,8 +64,8 @@ def compare(a: Summary, b: Summary) -> Comparison:
         per_persona=[
             PersonaDiff(
                 persona_id=p,
-                a_outcome=a_by[p].outcome if p in a_by else None,
-                b_outcome=b_by[p].outcome if p in b_by else None,
+                a_outcome=a_by.get(p),
+                b_outcome=b_by.get(p),
                 a_violations=a_rows[p].violations if p in a_rows else 0,
                 b_violations=b_rows[p].violations if p in b_rows else 0,
                 a_judge_mean=a_rows[p].judge_mean if p in a_rows else None,
@@ -64,7 +79,7 @@ def compare(a: Summary, b: Summary) -> Comparison:
 
 
 def main(argv: list[str] | None = None) -> Path:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(prog="python -m ab.compare", description=__doc__)
     ap.add_argument("--a", required=True)
     ap.add_argument("--b", required=True)
     ap.add_argument("--results", default="results")

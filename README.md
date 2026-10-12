@@ -111,7 +111,7 @@ Each step is resumable and can run on its own:
 
 Results are stored per prompt version in `results/<version>/`.
 
-At the default 8 requests/minute, a full 25-persona run can take up to about 1–1.5 hours in the worst case: up to ~33 requests per call, plus judge calls. Raise `sim.rpm` and `score.rpm` in `config.yaml` if your DeepSeek quota allows.
+Budget time for a full run. A call that runs the full 16 customer turns makes at least 33 LLM requests (agent + customer), and more when tools are called. At the default 8 requests/minute, 25 personas can take 2–4 hours, plus one judge call per transcript. Start with `ARGS="--n 5"`, and raise `sim.rpm` and `score.rpm` in `config.yaml` if your DeepSeek quota allows. Calls that error (bad key, network) are excluded from scoring and listed in the summary; re-running `make sim` retries them, and post-call and scores refresh automatically.
 
 ### Tests
 
@@ -179,7 +179,7 @@ The full list is in [DECISIONS.md](DECISIONS.md), and the post-Phase-1 bug audit
   - It uses an anchored rubric at temperature 0.
   - It never sees the agent's system prompt.
   - It cannot override the deterministic compliance rules.
-- **Privacy.** Phone, PAN, Aadhaar and email are redacted in transcripts, CRM records and logs, and personas are fictional.
+- **Privacy.** Phone, PAN, Aadhaar, card numbers and email are redacted in transcripts, CRM records and logs, including digits read out one or two at a time. Personas are fictional.
 - **Simple by design.** No database, no web framework beyond Pipecat's runner and no Docker: just folders of JSON validated by frozen pydantic schemas (`schemas/`).
 
 ## Limitations
@@ -188,6 +188,7 @@ The full list is in [DECISIONS.md](DECISIONS.md), and the post-Phase-1 bug audit
 - **Self-grading bias.** It is reduced, not removed. The judge and agent are different models but come from the same vendor, and the simulated customers are LLMs too, so they are more cooperative and articulate than real callers.
 - **Word lists.** The rules and the mood and objection detectors are keyword-based. They are fast and transparent, but they will miss paraphrases and spelled-out numbers ("gyarah percent").
 - **Unverified live behaviour.** Model ids, Deepgram `multi` on Hinglish, Sarvam pronunciation and live latency need a real run (see `VERIFY` in DECISIONS.md).
+- **Redaction is best-effort regex.** Numbers spelled out in words ("nau aath saat..."), names, addresses and OTPs are not masked.
 - **Voice transcript timestamps** are synthetic, because Pipecat context messages carry none.
 - **Compliance rules are illustrative.** The calling hours and rate band are a fictional policy and are not legal advice.
 

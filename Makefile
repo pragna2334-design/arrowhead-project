@@ -6,7 +6,10 @@ PROMPT ?= v1
 A ?= v1
 B ?= v2
 ARGS ?=
-RESULTS := results
+# Paths come from config.yaml so changing paths.results_dir / voice.latency_log just works.
+CFG = $(PY) -c "from brain.config import load_config as l; c = l(); print($(1))" 2>/dev/null
+RESULTS := $(shell $(call CFG,c.results_dir) || echo results)
+LATENCY := $(shell $(call CFG,c.voice['latency_log']) || echo logs/latency.jsonl)
 
 .PHONY: help install run-voice sim postcall score report eval compare demo-report demo-data test lint
 
@@ -20,26 +23,26 @@ install:  ## create .venv (Python 3.11) and install pinned deps
 run-voice:  ## browser voice bot at http://localhost:7860/client (PROMPT=v2 to switch prompt)
 	PROMPT_VERSION=$(PROMPT) $(PY) -m voice.bot -t webrtc
 
-sim:  ## text-mode simulator -> results/$(PROMPT)/transcripts (resumable)
+sim:  ## text-mode simulator -> results/PROMPT/transcripts (resumable)
 	@$(PY) -m sim.simulate --version $(PROMPT) $(ARGS); s=$$?; \
-	if [ $$s -eq 1 ]; then echo "warning: some calls errored; re-run 'make sim' to resume them"; fi; \
-	[ $$s -ne 2 ]
+	if [ $$s -eq 3 ]; then echo "warning: some calls errored (excluded from scoring); re-run 'make sim' to retry them"; fi; \
+	[ $$s -eq 0 ] || [ $$s -eq 3 ]
 
-postcall:  ## CRM records for every transcript -> results/$(PROMPT)/postcall
+postcall:  ## CRM records for every transcript -> results/PROMPT/postcall
 	$(PY) -m brain.postcall --version $(PROMPT)
 
-score:  ## rules + LLM judge -> results/$(PROMPT)/scores + summary.json (no re-simulation)
+score:  ## rules + LLM judge -> results/PROMPT/scores + summary.json (no re-simulation)
 	$(PY) -m score.score --version $(PROMPT)
 
-report:  ## report.html for $(PROMPT) (+ latency from logs/latency.jsonl)
-	$(PY) -m report.build_report --version $(PROMPT) --latency logs/latency.jsonl --out report.html
+report:  ## report.html for PROMPT (+ voice latency for that version)
+	$(PY) -m report.build_report --version $(PROMPT) --results $(RESULTS) --latency $(LATENCY) --out report.html
 
 eval: sim postcall score report  ## simulate -> post-call -> score -> report, one command
 
-compare:  ## A/B: results/compare_$(A)_$(B).json + report.html with the comparison view
+compare:  ## A/B: results/compare_A_B.json + report.html with the comparison view
 	$(PY) -m ab.compare --a $(A) --b $(B) --results $(RESULTS)
-	$(PY) -m report.build_report --version $(B) --compare $(RESULTS)/compare_$(A)_$(B).json \
-		--latency logs/latency.jsonl --out report.html
+	$(PY) -m report.build_report --version $(B) --results $(RESULTS) --compare $(RESULTS)/compare_$(A)_$(B).json \
+		--latency $(LATENCY) --out report.html
 
 demo-report:  ## build demo/report.html from bundled synthetic data (no API keys)
 	$(PY) -m report.build_report --version v1 --results demo/results \
@@ -52,6 +55,6 @@ demo-data:  ## regenerate the synthetic demo dataset
 test:  ## offline test suite
 	$(PY) -m pytest -q
 
-lint:
+lint:  ## ruff check + format check
 	$(PY) -m ruff check .
 	$(PY) -m ruff format --check .
