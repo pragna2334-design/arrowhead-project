@@ -138,6 +138,11 @@ def render_header(s: Summary, demo: bool, built_at: float) -> str:
         ("Agent model", s.agent_model),
         ("Judge model", judge),
         ("Calls", str(s.n_calls)),
+        *(
+            [("Errored calls (excluded)", f"{len(s.errored_calls)}: re-run make sim")]
+            if s.errored_calls
+            else []
+        ),
         ("Eval run", fmt_ts(s.generated_at)),
         ("Report generated", fmt_ts(built_at)),
     ]
@@ -502,7 +507,7 @@ def render_comparison(c: Comparison) -> str:
         + f"<h3>Per-persona diff</h3><p class='note'>{e(summary_line)}. A persona improves when "
         "it has fewer violations, newly books a callback, or its judge mean rises by ≥ 0.5; "
         "the reverse is a regression; both at once is mixed. Regressions are listed first; "
-        "uses the first call per persona.</p>"
+        "with repeats, the outcome is the most common one and violations are summed.</p>"
         + table(
             [
                 "Persona",
@@ -529,7 +534,7 @@ def render_comparison(c: Comparison) -> str:
 def render_footer(target: float) -> str:
     return (
         "<footer><h2>How this evaluation works</h2>"
-        "<p>A text-mode simulator plays 25 scripted customer personas (5 of them red-team "
+        "<p>A text-mode simulator plays scripted customer personas (including red-team "
         "attackers, ids starting <code>rt_</code>) against the agent, using the same brain, "
         "prompt and tools as the voice bot. Each transcript is then scored twice: deterministic "
         "rule checks flag compliance violations (disclosure, DNC, rate range, guaranteed "
@@ -749,7 +754,9 @@ def main(argv: list[str] | None = None) -> Path:
         comparison = _load(
             Comparison, Path(args.compare), "Run `make compare A=v1 B=v2` to create it."
         )
-    lat = summarize_latency(load_latency(Path(args.latency) if args.latency else None))
+    lat = summarize_latency(
+        load_latency(Path(args.latency) if args.latency else None, version=args.version)
+    )
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(

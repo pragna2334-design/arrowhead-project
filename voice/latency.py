@@ -34,8 +34,12 @@ def breakdown_to_record(
     for c in b.contributions:
         by_key[c.key] = by_key.get(c.key, 0.0) + c.duration_secs
 
-    def ttfb(kind: str) -> float | None:
-        vals = [t.duration_secs for t in b.ttfb if kind in t.processor.upper()]
+    def ttfb(suffix: str) -> float | None:
+        # Match the service class name ("SarvamTTSService#0" -> "SarvamTTSService") by suffix:
+        # a substring test for "TTS" would also hit "DeepgramSTTService" (S-TTS-ervice).
+        vals = [
+            t.duration_secs for t in b.ttfb if t.processor.split("#")[0].upper().endswith(suffix)
+        ]
         return max(vals) if vals else None
 
     pipeline = sum(v for k, v in by_key.items() if k not in _OUTSIDE_PIPELINE)
@@ -46,8 +50,8 @@ def breakdown_to_record(
         "ts": time.time(),
         "kind": "greeting" if b.measured_from is MeasuredFrom.CLIENT_CONNECTED else "turn",
         "stt_ms": _ms(by_key.get("transcription")),
-        "llm_ttfb_ms": _ms(ttfb("LLM")),
-        "tts_ttfb_ms": _ms(ttfb("TTS")),
+        "llm_ttfb_ms": _ms(ttfb("LLMSERVICE")),
+        "tts_ttfb_ms": _ms(ttfb("TTSSERVICE")),
         "pipeline_ms": _ms(pipeline) if by_key else None,
         "e2e_ms": _ms(b.total_secs),
         "contributions_ms": {k: _ms(v) for k, v in by_key.items()},

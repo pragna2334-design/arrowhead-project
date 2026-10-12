@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,8 +46,10 @@ class LatencySummary:
     stats: dict[str, LatencyStat]
 
 
-def load_latency(path: Path | None) -> list[LatencyRecord]:
-    """Read a latency JSONL file. Missing file -> []. Blank lines are skipped."""
+def load_latency(path: Path | None, version: str | None = None) -> list[LatencyRecord]:
+    """Read a latency JSONL file. Missing file -> []. Blank and malformed lines are skipped
+    (a crashed voice process can leave a truncated last line). If `version` is given, only
+    records for that prompt version (or with no version) are kept."""
     if path is None or not path.exists():
         return []
     records = []
@@ -54,9 +57,12 @@ def load_latency(path: Path | None) -> list[LatencyRecord]:
         if not line.strip():
             continue
         try:
-            records.append(LatencyRecord.model_validate(json.loads(line)))
+            rec = LatencyRecord.model_validate(json.loads(line))
         except ValueError as exc:
-            raise SystemExit(f"{path}:{i}: invalid latency record: {exc}") from exc
+            print(f"warning: {path}:{i}: skipping invalid latency record: {exc}", file=sys.stderr)
+            continue
+        if version is None or rec.prompt_version in (None, version):
+            records.append(rec)
     return records
 
 

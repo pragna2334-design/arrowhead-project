@@ -32,7 +32,8 @@ def breakdown(measured_from=MeasuredFrom.USER_SILENCE):
                 processor="DeepSeekLLMService#0", start_time=0, duration_secs=0.31
             ),
             TTFBBreakdownMetrics(processor="SarvamTTSService#0", start_time=0, duration_secs=0.22),
-            TTFBBreakdownMetrics(processor="DeepgramSTTService#0", start_time=0, duration_secs=0.1),
+            # STT slower than TTS: must not leak into tts_ttfb ("STTService" contains "TTS")
+            TTFBBreakdownMetrics(processor="DeepgramSTTService#0", start_time=0, duration_secs=0.6),
         ],
         contributions=[
             contrib("endpointing_wait", 0.2),
