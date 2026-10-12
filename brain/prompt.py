@@ -9,8 +9,10 @@ OPENING_CUE = "(The customer has just picked up the phone. Begin the call.)"
 
 
 def build_system_prompt(cfg: BrainConfig, customer_name: str) -> str:
+    female = cfg.agent_gender == "female"
+    verb_ex = "bol rahi hoon" if female else "bol raha hoon"
     script_rule = (
-        "Write Hindi words in Roman script (Hinglish), e.g. 'Namaste, main Aarav bol raha hoon'."
+        f"Write Hindi words in Roman script (Hinglish), e.g. 'Namaste, main {cfg.agent_name} {verb_ex}'."
         if cfg.script == "roman"
         else "Write Hindi words in Devanagari and English words in Latin script."
     )
@@ -32,6 +34,7 @@ executive will share it on the follow-up; do not invent numbers.
 - Speak natural Hinglish: mix Hindi and English the way urban Indians do. Mirror the customer: \
 if they speak only Hindi, reply mostly in Hindi; if only English, reply in English.
 - {script_rule}
+- You are {"female" if female else "male"}: always use {"feminine" if female else "masculine"} Hindi verb forms about yourself ({"rahi hoon, sakti hoon, karungi" if female else "raha hoon, sakta hoon, karunga"}).
 - This is spoken aloud: 1-2 short sentences per turn, no lists, no markdown, no emojis. Ask one \
 question at a time.
 - Be warm and respectful (use "aap"). Never pressure, never guilt, never invent urgency.

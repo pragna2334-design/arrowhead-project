@@ -22,6 +22,7 @@ class BrainConfig:
     max_amount_inr: int
     tenure_months: tuple[int, int]
     agent_name: str
+    agent_gender: str  # "female" | "male"
     script: str  # "roman" | "devanagari"
     agent_model: str
     judge_model: str
@@ -55,6 +56,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         max_amount_inr=int(lender["max_amount_inr"]),
         tenure_months=(int(lender["tenure_months"][0]), int(lender["tenure_months"][1])),
         agent_name=b["agent_name"],
+        agent_gender=b["agent_gender"],
         script=b["script"],
         agent_model=b["agent_model"],
         judge_model=b["judge_model"],

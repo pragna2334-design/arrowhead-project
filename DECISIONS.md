@@ -17,6 +17,7 @@
 - Voice mode does not save transcripts; only final call state (consent/callback/dnc) is logged. Transcripts come from the simulator in Phase 2.
 - Latency: `pipeline_ms` = sum of observer contributions except endpointing_wait, transcription, first_request, output_transport. `# VERIFY`: contribution keys fire as expected in a live call.
 - Customer is always the fictional "Rahul Verma"; configurable in `config.yaml`.
+- Agent is female ("Priya", Sarvam voice `priya`, feminine Hindi verb forms via `brain.agent_gender`); first live test showed the default `shubh` voice is male. `# VERIFY`: listen to `priya` vs other female voices.
 - Simple retry (429/500/503, 2-32 s backoff) lives in `AgentBrain`; the simulator rate limiter (8 RPM default) is Phase 2; DeepSeek's real limits are unverified.
 - ElevenLabs model/voice and Deepgram TTS voice names are unverified placeholders (`# VERIFY` in config.yaml).
 

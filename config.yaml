@@ -12,7 +12,8 @@ customer_default:                    # fictional test data only
   name: "Rahul Verma"
 
 brain:
-  agent_name: "Aarav"
+  agent_name: "Priya"
+  agent_gender: female               # female | male; drives Hindi verb forms in the prompt. Match tts voice.
   script: roman                      # roman | devanagari  (script the LLM writes Hindi in)
   # Models are pinned explicitly; we never rely on a library default.
   agent_model: "deepseek-flash"      # VERIFY: current DeepSeek name for V4.1 Flash (per Pipecat 1.12.0)
@@ -34,7 +35,7 @@ tts:
   provider: sarvam                   # sarvam | deepgram | elevenlabs
   sarvam:
     model: "bulbul:v3"
-    voice: "shubh"
+    voice: "priya"                   # female. Other bulbul:v3 female: ritu, neha, pooja, simran, kavya, ishita, shreya, roopa
     language: "hi-IN"                # no Hinglish code exists; mixed text is sent as-is
   deepgram:
     voice: "aura-2-thalia-en"        # VERIFY: English-only voice, Hinglish quality will drop
