@@ -666,7 +666,8 @@ def build_html(
     built_at: float | None = None,
 ) -> str:
     """Render the full report as one HTML string (pure function, no I/O)."""
-    built_at = time.time() if built_at is None else built_at
+    if built_at is None:  # demo: pin to the data's timestamp so the committed file is stable
+        built_at = summary.generated_at if demo else time.time()
     nav_items = [
         ("outcomes", "Outcomes"),
         ("violations", "Violations"),
