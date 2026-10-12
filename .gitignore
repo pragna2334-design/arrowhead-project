@@ -1,11 +1,11 @@
+# anchored to the repo root so demo/results and demo/report.html stay tracked
 .env
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
-logs/
-results/
-transcripts/
-report.html
 *.egg-info/
+/logs/
+/results/
+/report.html
