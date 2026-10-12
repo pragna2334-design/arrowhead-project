@@ -1,0 +1,25 @@
+[project]
+name = "arrowhead-vriddhi-agent"
+version = "0.1.0"
+description = "Hinglish voice AI sales agent (Vriddhi Finance, fictional) plus an automated evaluator"
+requires-python = ">=3.11"
+dependencies = [
+    # Exact pin: every import in this repo was checked against this version's source.
+    "pipecat-ai[deepgram,sarvam,google,webrtc,runner,silero]==1.12.0",
+    "google-genai>=2.29,<3",
+    "pyyaml>=6",
+    "python-dotenv>=1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.setuptools]
+packages = ["brain", "voice", "sim", "score", "report"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

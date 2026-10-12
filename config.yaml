@@ -1,0 +1,48 @@
+# Single source of truth for brain + voice. Voice and text-mode simulator both read this.
+
+lender:
+  name: "Vriddhi Finance"            # fictional NBFC
+  product: "pre-approved personal loan"
+  rate_min_pct: 11.5                 # agent may never quote outside [min, max]
+  rate_max_pct: 18.0
+  max_amount_inr: 500000
+  tenure_months: [12, 60]
+
+customer_default:                    # fictional test data only
+  name: "Rahul Verma"
+
+brain:
+  agent_name: "Aarav"
+  script: roman                      # roman | devanagari  (script the LLM writes Hindi in)
+  # Models are pinned explicitly; we never rely on a library default.
+  agent_model: "gemini-3.6-flash"    # VERIFY: model id available on your key
+  judge_model: "gemini-3.8-flash"    # VERIFY: must differ from agent_model (self-grading bias)
+  temperature: 0.4
+  max_output_tokens: 300
+  thinking_level: "low"              # voice needs low latency; "low" is accepted by both models
+  max_tool_rounds: 3
+
+stt:
+  provider: deepgram                 # deepgram | sarvam   (independent of tts.provider)
+  deepgram:
+    model: "nova-3-general"
+    language: "multi"                # VERIFY: Hindi-English code-switching; fall back to "hi"
+  sarvam:
+    mode: "codemix"                  # VERIFY: transcribe | translate | verbatim | translit | codemix
+
+tts:
+  provider: sarvam                   # sarvam | deepgram | elevenlabs
+  sarvam:
+    model: "bulbul:v3"
+    voice: "shubh"
+    language: "hi-IN"                # no Hinglish code exists; mixed text is sent as-is
+  deepgram:
+    voice: "aura-2-thalia-en"        # VERIFY: English-only voice, Hinglish quality will drop
+  elevenlabs:
+    voice_id: ""                     # fill in
+    model: "eleven_flash_v2_5"       # VERIFY
+
+voice:
+  vad_stop_secs: 0.2
+  latency_log: "logs/latency.jsonl"
+  latency_target_ms: 500
