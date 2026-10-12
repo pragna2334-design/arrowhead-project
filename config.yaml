@@ -8,6 +8,9 @@ lender:
   max_amount_inr: 500000
   tenure_months: [12, 60]
 
+compliance:
+  callback_hours: [10, 19]           # callbacks allowed 10:00-19:00 local (start incl., end excl.)
+
 customer_default:                    # fictional test data only
   name: "Rahul Verma"
 
@@ -22,6 +25,7 @@ brain:
   max_output_tokens: 300
   thinking: "disabled"               # enabled | disabled. Disabled: V4 models otherwise reason first (slow TTFB)
   max_tool_rounds: 3
+  prompt_version: v1                 # prompts/<version>.md; override with PROMPT_VERSION=v2
 
 stt:
   provider: deepgram                 # deepgram | sarvam   (independent of tts.provider)
@@ -47,3 +51,18 @@ voice:
   vad_stop_secs: 0.2
   latency_log: "logs/latency.jsonl"
   latency_target_ms: 500
+
+sim:
+  persona_count: 25                  # first N personas from sim/personas.yaml
+  max_turns: 16                      # customer turns per call
+  rpm: 8                             # LLM requests per minute across agent + customer
+  customer_model: "deepseek-flash"   # LLM that plays the customer (VERIFY)
+  customer_temperature: 0.8
+  seed: 7
+
+score:
+  judge_temperature: 0.0
+  rpm: 8
+
+paths:
+  results_dir: "results"             # results/<prompt_version>/{transcripts,postcall,scores,summary.json}

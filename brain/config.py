@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,8 @@ class BrainConfig:
     max_output_tokens: int
     thinking: str  # "enabled" | "disabled"
     max_tool_rounds: int
+    prompt_version: str
+    callback_hours: tuple[int, int]  # [start, end) local hours, e.g. (10, 19)
     default_customer_name: str
 
 
@@ -41,10 +44,17 @@ class AppConfig:
     stt: dict[str, Any] = field(default_factory=dict)
     tts: dict[str, Any] = field(default_factory=dict)
     voice: dict[str, Any] = field(default_factory=dict)
+    sim: dict[str, Any] = field(default_factory=dict)
+    score: dict[str, Any] = field(default_factory=dict)
+    results_dir: str = "results"
 
 
-def load_config(path: str | Path | None = None) -> AppConfig:
-    raw = yaml.safe_load(Path(path or DEFAULT_CONFIG_PATH).read_text())
+def load_config(path: str | Path | None = None, *, prompt_version: str | None = None) -> AppConfig:
+    """Load config.yaml. `prompt_version` (or env PROMPT_VERSION) overrides brain.prompt_version."""
+    raw = yaml.safe_load(Path(path or os.getenv("CONFIG_PATH") or DEFAULT_CONFIG_PATH).read_text())
+    override = prompt_version or os.getenv("PROMPT_VERSION")
+    if override:
+        raw["brain"]["prompt_version"] = override
     lender, b = raw["lender"], raw["brain"]
     if b["agent_model"] == b["judge_model"]:
         raise ValueError("brain.judge_model must differ from brain.agent_model (self-grading bias)")
@@ -64,8 +74,19 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         max_output_tokens=int(b["max_output_tokens"]),
         thinking=b["thinking"],
         max_tool_rounds=int(b["max_tool_rounds"]),
+        prompt_version=str(b["prompt_version"]),
+        callback_hours=(
+            int(raw["compliance"]["callback_hours"][0]),
+            int(raw["compliance"]["callback_hours"][1]),
+        ),
         default_customer_name=raw["customer_default"]["name"],
     )
     return AppConfig(
-        brain=brain, stt=raw.get("stt", {}), tts=raw.get("tts", {}), voice=raw.get("voice", {})
+        brain=brain,
+        stt=raw.get("stt", {}),
+        tts=raw.get("tts", {}),
+        voice=raw.get("voice", {}),
+        sim=raw.get("sim", {}),
+        score=raw.get("score", {}),
+        results_dir=raw.get("paths", {}).get("results_dir", "results"),
     )

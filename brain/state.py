@@ -12,6 +12,7 @@ class ToolCall:
     name: str
     args: dict[str, Any]
     result: dict[str, Any]
+    turn_index: int = -1  # index into CallState.turns of the last turn before the call
 
 
 @dataclass
@@ -19,6 +20,7 @@ class Turn:
     role: Literal["agent", "customer"]
     text: str
     ts: float = field(default_factory=time.time)
+    sentiment: str | None = None  # customer turns only: calm | annoyed | confused | interested
 
 
 @dataclass
@@ -30,9 +32,9 @@ class CallState:
     dnc: bool = False
     ended: bool = False
     end_reason: str | None = None
+    mood: str | None = None  # latest customer mood
     turns: list[Turn] = field(default_factory=list)
     tool_calls: list[ToolCall] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-serialisable form; this is the transcript schema the scorer reads."""
         return asdict(self)
