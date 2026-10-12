@@ -1,0 +1,8 @@
+{
+  "disposition": "wrong_person",
+  "objections": [],
+  "sentiment_trajectory": ["confused"],
+  "next_action": "no_action",
+  "turns": 2,
+  "summary": "Customer was not the intended person; call ended."
+}

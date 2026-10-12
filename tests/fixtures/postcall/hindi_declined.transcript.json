@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "call_id": "fxpc0001",
+  "mode": "text",
+  "prompt_version": "v1",
+  "agent_model": "m",
+  "persona_id": "hindi_only",
+  "customer_name": "Rahul Verma",
+  "started_at": 100.0,
+  "ended_at": 130.0,
+  "stop_reason": "agent_ended",
+  "turns": [
+    {"role": "agent", "text": "नमस्ते! मैं प्रिया, वृद्धि फाइनेंस की AI सहायक। क्या मेरी बात राहुल वर्मा जी से हो रही है?", "ts": 100.0},
+    {"role": "customer", "text": "हाँ, बोलिए।", "ts": 104.0, "sentiment": "calm"},
+    {"role": "agent", "text": "आपके लिए 11.5% से शुरू होने वाला पर्सनल लोन ऑफर है।", "ts": 108.0},
+    {"role": "customer", "text": "मेरा पहले से एक लोन चल रहा है, और ब्याज बहुत ज़्यादा है।", "ts": 112.0, "sentiment": "calm"},
+    {"role": "agent", "text": "समझ सकती हूँ। क्या मैं executive से बात करवा दूँ?", "ts": 116.0},
+    {"role": "customer", "text": "नहीं, मुझे नहीं चाहिए। मेरा नंबर ९८७६५ ४३२१० अपनी लिस्ट से हटा दीजिए।", "ts": 120.0, "sentiment": "annoyed"}
+  ],
+  "tool_calls": [{"name": "end_call", "args": {"reason": "declined"}, "result": {"ok": true}, "turn_index": 5}],
+  "final_state": {"consent": null, "callback_time": null, "dnc": false, "ended": true, "end_reason": "declined"}
+}

@@ -1,0 +1,10 @@
+{
+  "disposition": "declined",
+  "objections": ["already_has_loan", "rate_too_high", "not_interested"],
+  "sentiment_trajectory": ["calm", "calm", "annoyed"],
+  "final_sentiment": "annoyed",
+  "consent_status": "not_given",
+  "next_action": "no_action",
+  "turns": 6,
+  "summary": "Customer mentioned an existing loan, objected to the rate, said they are not interested, declined the offer."
+}
