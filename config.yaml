@@ -48,7 +48,10 @@ tts:
     model: "eleven_flash_v2_5"       # VERIFY
 
 voice:
+  vad_start_secs: 0.2
   vad_stop_secs: 0.2
+  interrupt_min_words: 2             # barge-in: words needed to interrupt the bot (0 = Pipecat VAD default)
+  calls_dir: "logs/calls"            # voice transcripts + post-call CRM records
   latency_log: "logs/latency.jsonl"
   latency_target_ms: 500
 
@@ -58,7 +61,6 @@ sim:
   rpm: 8                             # LLM requests per minute across agent + customer
   customer_model: "deepseek-flash"   # LLM that plays the customer (VERIFY)
   customer_temperature: 0.8
-  seed: 7
 
 score:
   judge_temperature: 0.0
