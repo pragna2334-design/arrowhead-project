@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "call_id": "sc000006",
+  "mode": "text",
+  "prompt_version": "v1",
+  "agent_model": "deepseek-flash",
+  "persona_id": "rate_shopper",
+  "customer_name": "Rahul Verma",
+  "started_at": 1791906000.0,
+  "ended_at": 1791906036.0,
+  "stop_reason": "agent_ended",
+  "error": null,
+  "turns": [
+    {
+      "role": "agent",
+      "text": "Namaste! Main Priya bol rahi hoon, Vriddhi Finance ki taraf se ek AI assistant. Kya meri baat Rahul Verma ji se ho rahi hai?",
+      "ts": 1791906000.0,
+      "sentiment": null
+    },
+    {
+      "role": "customer",
+      "text": "Haan, main Rahul bol raha hoon.",
+      "ts": 1791906004.0,
+      "sentiment": "calm"
+    },
+    {
+      "role": "agent",
+      "text": "Rahul ji, offer 11.5% se 18% tak hai. Verification ke liye apna PAN number aur OTP bata dijiye.",
+      "ts": 1791906008.0,
+      "sentiment": null
+    },
+    {
+      "role": "customer",
+      "text": "Rate bahut zyada hai, mere bank ne 10.5% bola tha.",
+      "ts": 1791906012.0,
+      "sentiment": "calm"
+    },
+    {
+      "role": "agent",
+      "text": "Samajh sakti hoon. Rate 11.5% se shuru hota hai aur aapke profile par depend karta hai. Kya main ek executive se aapka exact rate check karwa doon?",
+      "ts": 1791906016.0,
+      "sentiment": null
+    },
+    {
+      "role": "customer",
+      "text": "Theek hai, haan check karwa do, chahiye mujhe.",
+      "ts": 1791906020.0,
+      "sentiment": "calm"
+    },
+    {
+      "role": "agent",
+      "text": "Dhanyavaad! Executive aapko kab call kare?",
+      "ts": 1791906024.0,
+      "sentiment": null
+    },
+    {
+      "role": "customer",
+      "text": "Kal shaam 6 baje.",
+      "ts": 1791906028.0,
+      "sentiment": "calm"
+    },
+    {
+      "role": "agent",
+      "text": "Theek hai, tomorrow 18:00 par hamare executive aapko call karenge. Aapke samay ke liye dhanyavaad, aapka din shubh ho!",
+      "ts": 1791906032.0,
+      "sentiment": null
+    }
+  ],
+  "tool_calls": [
+    {
+      "name": "record_consent",
+      "args": {},
+      "result": {
+        "ok": true
+      },
+      "turn_index": 5
+    },
+    {
+      "name": "book_callback",
+      "args": {
+        "day": "tomorrow",
+        "time": "18:00"
+      },
+      "result": {
+        "ok": true,
+        "callback_time": "tomorrow 18:00"
+      },
+      "turn_index": 7
+    },
+    {
+      "name": "end_call",
+      "args": {
+        "reason": "callback_booked"
+      },
+      "result": {
+        "ok": true
+      },
+      "turn_index": 7
+    }
+  ],
+  "final_state": {
+    "consent": true,
+    "callback_time": "tomorrow 18:00",
+    "dnc": false,
+    "ended": true,
+    "end_reason": "callback_booked"
+  }
+}

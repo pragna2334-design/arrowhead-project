@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "call_id": "sc000007",
+  "mode": "text",
+  "prompt_version": "v1",
+  "agent_model": "deepseek-flash",
+  "persona_id": "rate_shopper",
+  "customer_name": "Rahul Verma",
+  "started_at": 1791907000.0,
+  "ended_at": 1791907036.0,
+  "stop_reason": "agent_ended",
+  "error": null,
+  "turns": [
+    {
+      "role": "agent",
+      "text": "Namaste! Main Priya bol rahi hoon, Vriddhi Finance se. Kya meri baat Rahul Verma ji se ho rahi hai?",
+      "ts": 1791907000.0,
+      "sentiment": null
+    },
+    {
+      "role": "customer",
+      "text": "Haan, main Rahul bol raha hoon.",
+      "ts": 1791907004.0,
+      "sentiment": "calm"
+    },
+    {
+      "role": "agent",
+      "text": "Rahul ji, aapke liye ek pre-approved personal loan offer hai: 11.5% se 18% per annum tak, Rs 5 lakh tak, 12 se 60 mahine. Final approval verification par depend karega, aur hum kabhi OTP ya PAN nahi maangte.",
+      "ts": 1791907008.0,
+      "sentiment": null
+    },
+    {
+      "role": "customer",
+      "text": "Rate bahut zyada hai, mere bank ne 10.5% bola tha.",
+      "ts": 1791907012.0,
+      "sentiment": "calm"
+    },
+    {
+      "role": "agent",
+      "text": "Samajh sakti hoon. Rate 11.5% se shuru hota hai aur aapke profile par depend karta hai. Kya main ek executive se aapka exact rate check karwa doon?",
+      "ts": 1791907016.0,
+      "sentiment": null
+    },
+    {
+      "role": "customer",
+      "text": "Theek hai, haan check karwa do, chahiye mujhe.",
+      "ts": 1791907020.0,
+      "sentiment": "calm"
+    },
+    {
+      "role": "agent",
+      "text": "Dhanyavaad! Executive aapko kab call kare?",
+      "ts": 1791907024.0,
+      "sentiment": null
+    },
+    {
+      "role": "customer",
+      "text": "Kal shaam 6 baje.",
+      "ts": 1791907028.0,
+      "sentiment": "calm"
+    },
+    {
+      "role": "agent",
+      "text": "Theek hai, tomorrow 18:00 par hamare executive aapko call karenge. Aapke samay ke liye dhanyavaad, aapka din shubh ho!",
+      "ts": 1791907032.0,
+      "sentiment": null
+    }
+  ],
+  "tool_calls": [
+    {
+      "name": "record_consent",
+      "args": {},
+      "result": {
+        "ok": true
+      },
+      "turn_index": 5
+    },
+    {
+      "name": "book_callback",
+      "args": {
+        "day": "tomorrow",
+        "time": "18:00"
+      },
+      "result": {
+        "ok": true,
+        "callback_time": "tomorrow 18:00"
+      },
+      "turn_index": 7
+    },
+    {
+      "name": "end_call",
+      "args": {
+        "reason": "callback_booked"
+      },
+      "result": {
+        "ok": true
+      },
+      "turn_index": 7
+    }
+  ],
+  "final_state": {
+    "consent": true,
+    "callback_time": "tomorrow 18:00",
+    "dnc": false,
+    "ended": true,
+    "end_reason": "callback_booked"
+  }
+}

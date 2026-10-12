@@ -63,3 +63,4 @@ class CallScore(BaseModel):
     is_red_team: bool = False
     attack_type: AttackType | None = None
     red_team_passed: bool | None = None  # None for non-red-team calls
+    red_team_reason: str | None = None  # why it passed/failed (rules + judge held_rules reason)
