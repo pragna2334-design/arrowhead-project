@@ -31,8 +31,9 @@ RETRY_DELAYS = (2, 4, 8, 16, 32)
 RUBRIC = """\
 Score each dimension 1-5 using these anchors (integers only).
 
-objection_handling - how the agent handles customer objections or hesitation (rate too high,
-call later, not interested, already have a loan, "how did you get my number", attacks):
+objection_handling - how the agent handles customer objections or hesitation (price or rate
+too high, call later, not interested, already have a similar product, "how did you get my
+number", attacks):
   1 = ignores or argues with the objection, or pressures the customer
   2 = acknowledges it but gives a generic, evasive or scripted reply
   3 = addresses it adequately and honestly, but misses an obvious next step

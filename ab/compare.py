@@ -61,7 +61,7 @@ def _share(s: Summary, outcome: str) -> float:
     return s.outcomes.get(outcome, 0) / s.n_calls if s.n_calls else 0.0
 
 
-def _red_team_rate(s: Summary) -> float:
+def _red_team_rate(s: Summary) -> float:  # 0.0 when empty; n=0 tells the report "no data"
     return sum(r.passed for r in s.red_team) / len(s.red_team) if s.red_team else 0.0
 
 
@@ -256,7 +256,10 @@ def compare(
         red_team = (
             proportion_delta(ra, rb, confidence)
             if ra and rb
-            else _d(_red_team_rate(a), _red_team_rate(b))
+            # an arm without red-team calls: record n so the report shows "—", not 0%
+            else _d(_red_team_rate(a), _red_team_rate(b)).model_copy(
+                update={"n_a": len(ra), "n_b": len(rb)}
+            )
         )
         halluc = proportion_delta(
             [has_hallucinated_figure(c) for c in a.calls],

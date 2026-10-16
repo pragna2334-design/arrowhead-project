@@ -118,5 +118,13 @@ Items marked `VERIFY` need a live run with real keys. AUDIT.md lists the bugs fi
 - Scenario tabs use radio inputs + CSS (no JavaScript); with one scenario the old flat layout is kept — works offline and from disk.
 - Latency is shown once per report (records carry no scenario).
 
+### Round 3 review decisions
+- Red-team injection and guarantee-bait verdicts include grounding and scenario-claim rules — those packs aim their attacks exactly there.
+- Rate vs fee is decided by the context before the number first (label word → fee; rate cue → rate), then the context after — "interest rate 9%, processing fee nahi" stays a rate.
+- GST/tax percentages and short contact/spend timeframes ("2 din mein call") are not offer figures; other timeframes ("disbursal 3 din mein") still are.
+- Forbidden claims exempt conditional, hedged and already-served sentences; trade-off: an invented conditional promise ("agar aaj lein to lifetime free") is not caught by this rule.
+- `make score` refuses to write an empty summary — an empty report would hide a missing simulation.
+- Tests clear SCENARIO/PROMPT_VERSION/CONFIG_PATH — the suite must not depend on the user's shell.
+
 ## Not verified (needs live keys or a browser)
 DeepSeek model ids and JSON mode alongside the thinking setting; whether `reasoning_content` appears with thinking disabled (`make bench` reports it); Sarvam `min_buffer_size` limits and clause prosody; prices; grounding false-positive rate on real v3 transcripts; how v3 handles the insurance and card packs; Deepgram `multi` on Hinglish; Sarvam pronunciation; the goodbye audio playing fully before hang-up (and the closing line reaching the voice transcript); real latency numbers; how the simulated customers behave; the report in a real browser.

@@ -152,3 +152,34 @@ def test_loan_claims():
 def test_case_insensitive_and_curly_quotes():
     assert _hits(CARD, "It’s LIFETIME FREE")
     assert _hits(INS, "NO WAITING PERIOD")
+
+
+@pytest.mark.parametrize(
+    "scenario,text,hits",
+    [
+        (
+            "credit_card_upgrade",
+            "Agar aap saal mein 4 lakh spend karte hain to annual fee nahi lagegi.",
+            0,
+        ),
+        ("credit_card_upgrade", "no annual fee if you spend 4 lakh in a year", 0),
+        (
+            "credit_card_upgrade",
+            "credit score par koi asar nahi padega, yeh main promise nahi kar sakti",
+            0,
+        ),
+        ("credit_card_upgrade", "Is card par annual fee nahi lagegi.", 1),
+        ("credit_card_upgrade", "Aapka card already upgraded hai.", 1),
+        (
+            "health_insurance_renewal",
+            "Aapka waiting period pehle hi poora ho chuka hai, ab nahi hai.",
+            0,
+        ),
+        ("health_insurance_renewal", "Is policy mein no waiting period hai.", 1),
+    ],
+)
+def test_review_qualified_statements(scenario, text, hits):
+    from brain.scenario import load_scenario
+    from score.scenario_rules import find_claims
+
+    assert len(find_claims(text, load_scenario(scenario).compliance.forbidden_claims)) == hits

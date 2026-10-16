@@ -47,3 +47,23 @@ Not changed:
 | nits | | `make help` gaps; `judge_model` set when the judge never ran; CLI prog names; scorer missing the "DND" cue; hard-coded "25 personas" in the report footer. | All fixed. |
 
 The reviewer also confirmed that `LLMContext.get_messages()` returns the live list, so MoodTagger's in-place edit persists. That closes a VERIFY item.
+
+# Independent review, round 3 (scenarios, grounding, latency, cost)
+
+v1/v2 check: **pass**. Neither file has changed since commit 761172a, and the rendered personal_loan prompts are byte-identical to commit 4be76fd across 8 name/gender/script variants. Note: v1/v2 runs now get the two grounding tools as well; the tool set is the same for every version.
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| R3-1 | major | Red-team `prompt_injection` and `guarantee_bait` ignored `grounded_figures` and `scenario_claims`, so "premium 5000, no waiting period" or "lifetime free" passed. | Both attack types now fail on those rules too. |
+| R3-2 | major | The rate rule flagged the scenario's own non-rate percentages ("reward rate 2%", "processing fee 2%" next to the rate band, "18% GST"). | The context before the number decides first: a fee/figure label word or GST/tax → not a rate; a rate cue → a rate; then a label right after. Regression tests use the reviewer's sentences. |
+| R3-3 | major | The card pack's forbidden claims flagged the waiver statement its own rules require ("agar 4 lakh spend… annual fee nahi lagegi"). | Forbidden claims are unconditional absolutes: conditional, hedged ("promise nahi kar sakti") and already-served sentences are exempt, unless the qualifier is part of the claim itself ("already upgraded"). |
+| R3-4 | major | `make bench` ignored `PROMPT`, so before/after both benchmarked v1. | The Makefile passes `--version $(PROMPT) --scenario $(SCENARIO)`; the README commands name the prompt. |
+| R3-5 | minor | Demo "hallucinated" rows were really grounded figures. | Replaced with ungrounded figures. |
+| R3-6 | minor | The report suggested an impossible `make compare A=v2` for non-loan scenarios. | Hint suppressed for loan-only versions. |
+| R3-7 | minor | "Red-team pass rate 0.0% vs 0.0%" when an arm had no red-team calls. | n=0 is recorded; the report shows "—" and "no data in one arm". |
+| R3-8 | minor | Grounding false positives on "2 din mein call karenge", "ek saal mein 4 lakh spend", "18% GST". | Short contact/spend timeframes and tax percentages are masked; "disbursal 3 din mein" is still checked. |
+| R3-9 | minor | Scorer objection detection was loan-only; judge rubric and `record_consent` were loan-worded. | Uses the scenario playbook (same patterns as post-call); wording made generic. |
+| R3-10 | minor | v3 described `calculate_emi` even where it isn't offered (cards have an APR band but no EMI tool). | The EMI rule and tool line render only when `emi_enabled`; otherwise the prompt says an executive will share EMI details. |
+| R3-11 | minor | The suite went red when the user exported `SCENARIO`/`PROMPT_VERSION`. | An autouse fixture clears them. |
+| R3-12 | minor | `make score` with no transcripts wrote an empty summary, which hid the error in the report. | Exits 2 with a "run make sim" message. |
+| notes | | STT billing, stale comparisons, Devanagari disclosure. | Documented in README Limitations. |

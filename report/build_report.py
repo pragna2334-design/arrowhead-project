@@ -28,6 +28,7 @@ from typing import get_args
 
 from pydantic import ValidationError
 
+from brain.prompt import LOAN_ONLY_VERSIONS
 from report.charts import hbar_rows, histogram_1_to_5, latency_bullet, stacked_bar
 from report.stats import LatencySummary, load_latency, summarize_latency
 from schemas import (
@@ -687,16 +688,22 @@ def _verdict(m: MetricDelta, higher_better: bool | None, eps: float = 1e-9) -> s
 def _delta_row(label: str, m: MetricDelta, kind: str, higher_better: bool | None) -> str:
     better = {True: "higher", False: "lower", None: "neither"}[higher_better]
     n = f"{m.n_a} / {m.n_b}" if m.n_a is not None and m.n_b is not None else "—"
+    no_a, no_b = m.n_a == 0, m.n_b == 0  # e.g. no red-team calls in that arm
     verdict = (
         '<span class="muted">count only — compare the rates</span>'
         if kind == "count"
+        else '<span class="muted">no data in one arm</span>'
+        if no_a or no_b
         else _verdict(m, higher_better)
     )
+    cell_a = "—" if no_a else f"{e(_fmt(m.a, kind))}{_fmt_ci(m.a_ci95, kind)}"
+    cell_b = "—" if no_b else f"{e(_fmt(m.b, kind))}{_fmt_ci(m.b_ci95, kind)}"
+    delta = "—" if no_a or no_b else _fmt_delta(m, kind)
     return (
         f"<tr><td>{label}</td>"
-        f"<td class='num'>{e(_fmt(m.a, kind))}{_fmt_ci(m.a_ci95, kind)}</td>"
-        f"<td class='num'>{e(_fmt(m.b, kind))}{_fmt_ci(m.b_ci95, kind)}</td>"
-        f"<td class='num'>{_fmt_delta(m, kind)}</td><td class='num'>{e(n)}</td>"
+        f"<td class='num'>{cell_a}</td>"
+        f"<td class='num'>{cell_b}</td>"
+        f"<td class='num'>{delta}</td><td class='num'>{e(n)}</td>"
         f"<td class='muted'>{better}</td><td>{verdict}</td></tr>"
     )
 
@@ -1232,6 +1239,8 @@ def main(argv: list[str] | None = None) -> Path:
         for sc in scenarios:
             path = find_comparison(root, sc, args.version, args.compare_with)
             if path is None:
+                if args.compare_with in LOAN_ONLY_VERSIONS and sc != "personal_loan":
+                    continue  # v1/v2 are loan-only: no comparison can exist; nothing to hint
                 print(
                     f"warning: no comparison {args.compare_with} vs {args.version} for {sc}; "
                     f"run `make compare A={args.compare_with} B={args.version} SCENARIO={sc}`",

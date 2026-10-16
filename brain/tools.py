@@ -25,8 +25,7 @@ TOOL_SPECS: list[ToolSpec] = [
     ToolSpec(
         "record_consent",
         "Record that the customer explicitly agreed to be contacted by an executive to proceed "
-        "with the loan application (a clear yes, not silence or 'maybe'). Call only after they "
-        "say yes.",
+        "with the offer (a clear yes, not silence or 'maybe'). Call only after they say yes.",
         {},
         [],
     ),

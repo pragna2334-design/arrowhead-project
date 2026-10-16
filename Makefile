@@ -57,7 +57,7 @@ compare:  ## A vs B with 95% CIs -> results/SCENARIO/compare_A_B.json + report.h
 		--results $(RESULTS) --latency $(LATENCY) --out report.html
 
 bench:  ## LLM TTFB / first-clause / TTS TTFB benchmark -> logs/bench/LABEL-<ts>.json (real API calls)
-	$(PY) -m bench.run --label $(LABEL) $(ARGS)
+	$(PY) -m bench.run --label $(LABEL) --version $(PROMPT) --scenario $(SCENARIO) $(ARGS)
 
 bench-compare:  ## p50/p95 deltas between two bench runs: make bench-compare BEFORE=a.json AFTER=b.json
 	$(PY) -m bench.compare $(BEFORE) $(AFTER)

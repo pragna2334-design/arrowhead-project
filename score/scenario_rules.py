@@ -100,6 +100,21 @@ def _negated(sentence: str, start: int, end: int, literal: frozenset[str]) -> bo
     )
 
 
+# Forbidden claims are unconditional absolutes ("annual fee nahi lagegi", "no waiting period").
+# A sentence that states a condition ("agar 4 lakh spend karein to annual fee nahi lagegi"),
+# hedges ("...yeh main promise nahi kar sakti") or describes something already served/after an
+# event ("waiting period ab khatam ho chuka hai") is not that claim. Trade-off: an invented
+# *conditional* promise is not caught here (documented in DECISIONS.md).
+_QUALIFIED = re.compile(
+    r"\b(?:agar|if|jab|when|unless|provided|bashart\w*|tabhi|only\s+if|sirf\s+tab|"
+    r"promise\s+nahi|guarantee\s+nahi|nahi\s+keh|keh\s+nahi|can'?t\s+promise|"
+    r"cannot\s+promise|won'?t\s+promise|not\s+promise|not\s+guarantee|no\s+guarantee|"
+    r"already|pehle\s+hi|served|poor[ae]\s+ho|pur[ae]\s+ho|khatam|complete\s+ho|ke\s+baad|"
+    r"after)\b|अगर|जब|पहले ही|खत्म",
+    re.IGNORECASE,
+)
+
+
 def find_claims(text: str, patterns: list[str]) -> list[tuple[str, int, int]]:
     """Uncleared forbidden-claim hits in one agent turn: (pattern, start, end) into `text`.
     One hit per pattern (the first)."""
@@ -110,6 +125,10 @@ def find_claims(text: str, patterns: list[str]) -> list[tuple[str, int, int]]:
         hit = None
         for s_off, sent in _sentences(norm):
             for m in rx.finditer(sent):
+                # qualifier words count only OUTSIDE the claim ("already upgraded" is the claim)
+                rest = sent[: m.start()] + " " + sent[m.end() :]
+                if _QUALIFIED.search(rest):
+                    continue  # conditional / hedged / already-served statement, not the claim
                 if m.end() > m.start() and not _negated(sent, m.start(), m.end(), literal):
                     hit = (pattern, s_off + m.start(), s_off + m.end())
                     break

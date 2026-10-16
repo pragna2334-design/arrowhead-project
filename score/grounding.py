@@ -159,6 +159,22 @@ _MASKS = [
         r"(?<![\d.])\d+(?:\.\d+)?\s*(?:minutes?|mins?|seconds?|secs?|ghante|ghanta|hours?|hrs?|"
         r"मिनट|सेकंड|घंटे)(?![a-z])"
     ),
+    # Short timeframes for contact/spend, not offer figures: "2 din mein call karenge", "ek saal
+    # mein 4 lakh spend". Only small counts (1-7) followed by a contact/spend verb, so a grace
+    # period, tenure or "disbursal 3 din mein" is still checked.
+    re.compile(
+        r"(?<![\d.])(?:[1-7]|ek|do|teen|char|chaar|paanch|chhe|saat|one|two|three|four|five|six|"
+        r"seven|a)\s*(?:din|dino|dinon|days?|saal|years?|hafte|hafton|weeks?)\s+"
+        r"(?:mein|me|ke\s+andar|ke\s+bheetar|within|in)(?![a-z])"
+        # ...only around contact/spend verbs: "disbursal 3 din mein" is a product promise
+        r"(?=[^.!?,;]{0,25}?\b(?:call|calls|contact|sampark|baat|phone|spend|kharch\w*)\b)"
+    ),
+    re.compile(
+        r"\b(?:call|contact)\w*\s+(?:\w+\s+){0,3}within\s+[1-7]\s+(?:days?|weeks?|years?)\b"
+    ),
+    # Statutory tax on a fee ("18% GST") is not a product term the scenario defines.
+    re.compile(r"(?<![\d.])\d{1,2}(?:\.\d+)?\s*(?:%|percent|pratishat)\s*(?:ka\s+)?(?:gst|tax)\b"),
+    re.compile(r"\b(?:gst|tax)\s+(?:of\s+|bhi\s+)?\d{1,2}(?:\.\d+)?\s*(?:%|percent|pratishat)"),
 ]
 
 

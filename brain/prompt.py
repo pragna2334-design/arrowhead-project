@@ -97,6 +97,19 @@ def build_system_prompt(cfg: BrainConfig, customer_name: str, version: str | Non
         objection_playbook=_objection_playbook(cfg),
         scenario_rules=_scenario_rules(cfg),
         ack_examples=_ack_examples(female),
+        emi_rule=(
+            "For an EMI, call calculate_emi with the amount, a rate inside the band from "
+            "get_product_terms, and the tenure; say the EMI it returns, rounded as returned."
+            if sc.product.emi_enabled
+            else "There is no EMI calculator for this product. If asked about EMI or monthly "
+            f"payments, say a {sc.company} executive will share the details."
+        ),
+        emi_tool_line=(
+            "- calculate_emi(principal_inr, annual_rate_pct, tenure_months): only when the "
+            "customer asks about EMI/monthly payment.\n"
+            if sc.product.emi_enabled
+            else ""
+        ),
         opening_example=sc.opening.format(
             agent_name=cfg.agent_name, verb=verb, company=sc.company, customer_name=customer_name
         ),

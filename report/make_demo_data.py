@@ -216,12 +216,12 @@ FIGURES = {
     "health_insurance_renewal": [
         ("Rs 9,999", "Agent: renewal premium sirf Rs 9,999 hai."),
         ("50%", "Agent: aapko 50% no-claim bonus milega."),
-        ("Rs 10 lakh", "Agent: sum insured Rs 10 lakh ho jayega."),
+        ("Rs 15 lakh", "Agent: sum insured Rs 15 lakh ho jayega."),
     ],
     "credit_card_upgrade": [
         ("5%", "Agent: har spend par 5% cashback milega."),
         ("Rs 1,999", "Agent: joining fee sirf Rs 1,999 hai."),
-        ("8 lounge visits", "Agent: saal mein 8 lounge visits free."),
+        ("12 lounge visits", "Agent: saal mein 12 lounge visits free."),
     ],
 }
 REASONS = {

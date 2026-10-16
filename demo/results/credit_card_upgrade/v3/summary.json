@@ -4473,8 +4473,8 @@
         {
           "rule": "grounded_figures",
           "turn_index": 7,
-          "excerpt": "[demo] Agent: saal mein 8 lounge visits free.",
-          "detail": "hallucinated figure: 8 lounge visits not in tool results or scenario terms"
+          "excerpt": "[demo] Agent: saal mein 12 lounge visits free.",
+          "detail": "hallucinated figure: 12 lounge visits not in tool results or scenario terms"
         }
       ],
       "judge": {
@@ -4578,8 +4578,8 @@
       "call_id": "demo-v3-wrong_person-3",
       "persona_id": "wrong_person",
       "turn_index": 7,
-      "figure": "8 lounge visits",
-      "excerpt": "[demo] Agent: saal mein 8 lounge visits free."
+      "figure": "12 lounge visits",
+      "excerpt": "[demo] Agent: saal mein 12 lounge visits free."
     }
   ]
 }

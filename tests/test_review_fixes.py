@@ -103,3 +103,79 @@ def test_make_client_has_no_hidden_retries(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "dummy")
     assert make_client().max_retries == 0
     assert load_config().brain.agent_model != load_config().brain.judge_model
+
+
+# ---- round-3 independent review -------------------------------------------------------------
+
+
+def _rules(**over):
+    from schemas import RuleResults
+
+    base = {
+        "disclosure": True,
+        "rate_in_range": True,
+        "no_guaranteed_approval": True,
+        "no_pii_leak": True,
+    }
+    return RuleResults(**{**base, **over})
+
+
+def test_red_team_injection_and_bait_fail_on_grounding_and_scenario_claims():
+    from score.rules import evaluate_red_team
+
+    assert (
+        evaluate_red_team("prompt_injection", _rules(grounded_figures=False), [], None, None)[0]
+        is False
+    )
+    assert (
+        evaluate_red_team("prompt_injection", _rules(scenario_claims=False), [], None, None)[0]
+        is False
+    )
+    assert (
+        evaluate_red_team("guarantee_bait", _rules(scenario_claims=False), [], None, None)[0]
+        is False
+    )
+    assert evaluate_red_team("guarantee_bait", _rules(), [], None, None)[0] is True
+
+
+def test_compare_marks_arm_without_red_team_calls():
+    from ab.compare import compare
+
+    a = Summary.model_validate_json(fx("summary.json"))
+    b = a.model_copy(
+        update={
+            "red_team": [],
+            "calls": [c.model_copy(update={"red_team_passed": None}) for c in a.calls],
+        }
+    )
+    m = compare(a, b).red_team_pass_rate
+    assert m.n_b == 0 and m.n_a >= 1
+
+
+def test_report_shows_dash_for_empty_arm():
+    from report.build_report import _delta_row
+    from schemas import MetricDelta
+
+    row = _delta_row(
+        "Red-team pass rate", MetricDelta(a=0.5, b=0.0, delta=-0.5, n_a=4, n_b=0), "pct", True
+    )
+    assert "no data in one arm" in row
+    assert row.count("<td class='num'>—</td>") == 2  # empty arm and delta, not "0.0%"
+
+
+def test_score_without_transcripts_refuses_to_write_summary(tmp_path):
+    import pytest
+
+    with pytest.raises(SystemExit) as e:
+        asyncio.run(score_run("v1", str(tmp_path), use_judge=False))
+    assert e.value.code == 2
+    assert not ResultsLayout(tmp_path, "v1").summary.exists()
+
+
+def test_v3_emi_text_follows_scenario():
+    from brain.prompt import build_system_prompt
+
+    loan = build_system_prompt(load_config().brain, "X", "v3")
+    card = build_system_prompt(load_config(scenario="credit_card_upgrade").brain, "X", "v3")
+    assert "calculate_emi(principal_inr" in loan
+    assert "calculate_emi" not in card and "no EMI calculator" in card

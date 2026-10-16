@@ -35,6 +35,13 @@ def stub_client(script):
     return NS(chat=NS(completions=comp)), comp
 
 
+@pytest.fixture(autouse=True)
+def _isolate_env(monkeypatch):
+    """Tests use config.yaml defaults, whatever the user exported (SCENARIO=..., etc.)."""
+    for var in ("SCENARIO", "PROMPT_VERSION", "CONFIG_PATH"):
+        monkeypatch.delenv(var, raising=False)
+
+
 @pytest.fixture
 def cfg():
     return load_config()

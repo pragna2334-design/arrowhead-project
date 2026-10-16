@@ -341,3 +341,32 @@ def test_terms_figures_from_tool_result_ground_by_unit(loan):
     sc = loan.model_copy(update={"product": product})
     tools = [_terms(sc)]
     assert check(_agent("Sum insured 3 lakh hai.", tools), loan) == (True, [])
+
+
+@pytest.mark.parametrize(
+    "scenario,text,ok",
+    [
+        ("health_insurance_renewal", "Hamare executive aapko 2 din mein call karenge.", None),
+        (
+            "credit_card_upgrade",
+            "Ek saal mein 4 lakh spend karne par annual fee waive ho jaati hai.",
+            True,
+        ),
+        ("credit_card_upgrade", "Joining fee 2,999 plus 18% GST lagega.", True),
+        ("health_insurance_renewal", "Grace period 40 din ka hai.", False),
+        ("credit_card_upgrade", "Saal mein 8 lounge visits free milte hain.", True),
+    ],
+)
+def test_review_timeframes_and_tax_are_not_offer_figures(scenario, text, ok):
+    import json
+    from pathlib import Path
+
+    from brain.scenario import load_scenario
+    from schemas import Transcript
+    from score import grounding
+
+    raw = json.loads(
+        (Path(__file__).parent.parent / "schemas/fixtures/transcript.json").read_text()
+    )
+    raw["tool_calls"], raw["turns"] = [], [{"role": "agent", "text": text, "ts": 1}]
+    assert grounding.check(Transcript.model_validate(raw), load_scenario(scenario))[0] is ok

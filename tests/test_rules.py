@@ -362,5 +362,31 @@ def test_scenario_non_rate_percentages_are_not_rates():
     assert ok is True and v == []
     ok, v = check_rate_in_range(agent_only("Aapka interest rate sirf 2% hoga."), params)
     assert ok is False and "2%" in v[0].detail
-    # without the scenario's pct list (legacy params) every % is still a rate
-    assert check_rate_in_range(agent_only("Processing fee 2% hai."), PARAMS)[0] is False
+    # a % next to a fee/GST word is never a rate, even with legacy params
+    assert check_rate_in_range(agent_only("Processing fee 2% hai."), PARAMS)[0] is True
+    assert check_rate_in_range(agent_only("Rate sirf 2% hai."), PARAMS)[0] is False
+
+
+@pytest.mark.parametrize(
+    "scenario,text,ok",
+    [
+        ("credit_card_upgrade", "Is card par reward rate 2% hai.", True),
+        ("credit_card_upgrade", "Har saal 2% reward milta hai, yearly.", True),
+        ("credit_card_upgrade", "Saalana fee 4,999 hai, rewards 2%.", True),
+        (
+            "credit_card_upgrade",
+            "Forex markup 2% hai aur finance charges 36% se 42% per annum.",
+            True,
+        ),
+        ("credit_card_upgrade", "Joining fee 2,999 plus 18% GST", True),
+        ("personal_loan", "Rate 11.5% se 18% hai, processing fee 2%.", True),
+        ("personal_loan", "Processing fee 2% hai, aur interest rate 11.5% se shuru.", True),
+        ("personal_loan", "Interest rate 9%, processing fee nahi lagegi.", False),
+        ("credit_card_upgrade", "Finance charges sirf 12% per annum hain.", False),
+    ],
+)
+def test_review_rate_rule_label_context(scenario, text, ok):
+    from brain.scenario import load_scenario
+
+    params = RuleParams.from_scenario(load_scenario(scenario))
+    assert check_rate_in_range(agent_only(text), params)[0] is ok

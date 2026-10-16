@@ -120,8 +120,8 @@ At startup the bot logs `LLM <model>: thinking=disabled (reasoning off)`. After 
 ### 3. Benchmark latency (before/after)
 
 ```bash
-make bench LABEL=before ARGS="--aggregation sentence"    # Pipecat's sentence chunking
-make bench LABEL=after                                   # clause chunking (config default)
+make bench LABEL=before PROMPT=v2 ARGS="--aggregation sentence"   # old setup
+make bench LABEL=after  PROMPT=v3                                  # clause chunking + acks
 make bench-compare BEFORE=logs/bench/before-*.json AFTER=logs/bench/after-*.json
 ```
 
@@ -320,6 +320,13 @@ The full list is in [DECISIONS.md](DECISIONS.md), and the bug audits are in [AUD
   - Prices are placeholders.
   - Text-mode audio seconds are estimated.
   - Voice calls don't record token usage yet, so live-call cost is not computed.
+- **STT cost.** Streaming STT usually bills all streamed audio, including silence and bot
+  speech, while the text-mode estimate counts only customer words. Real STT cost will be higher.
+- **Stale comparisons.** A `compare_A_B.json` is not invalidated when you re-score; re-run
+  `make compare` after `make score`.
+- **Devanagari disclosure.** The disclosure check matches company names in Roman script (plus
+  "Vriddhi" in Devanagari). With `brain.script: devanagari`, add the Devanagari company name to
+  the pack's `disclosure_terms` aliases.
 - **Sarvam buffering.** Sarvam buffers `min_buffer_size` characters (50 by default) on its side
   before synthesizing. That may delay a short first clause; try a lower value once verified
   (`tts.sarvam.min_buffer_size`).

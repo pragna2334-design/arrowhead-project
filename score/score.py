@@ -292,6 +292,13 @@ async def run(
             print("warning: DEEPSEEK_API_KEY not set; scoring without the judge", file=sys.stderr)
 
     paths = sorted(layout.transcripts.glob("*.json")) if layout.transcripts.exists() else []
+    if not paths:  # don't write an empty summary that would mask the real problem in the report
+        print(
+            f"error: no transcripts in {layout.transcripts}; run `make sim "
+            f"SCENARIO={sc.id} PROMPT={version}` first",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     agent_models: set[str] = set()
     valid_ids: set[str] = set()
     errored: list[str] = []
