@@ -6,6 +6,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
+from schemas import CallUsage
+
 
 @dataclass
 class ToolCall:
@@ -35,6 +37,9 @@ class CallState:
     mood: str | None = None  # latest customer mood
     turns: list[Turn] = field(default_factory=list)
     tool_calls: list[ToolCall] = field(default_factory=list)
+    usage: CallUsage = field(default_factory=CallUsage)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d["usage"] = self.usage.model_dump()
+        return d

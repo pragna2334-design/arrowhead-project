@@ -56,7 +56,7 @@ from brain.postcall import write_voice_records
 from brain.prompt import OPENING_CUE, build_system_prompt
 from brain.redact import install_log_redaction
 from brain.state import CallState
-from brain.tools import TERMINAL_TOOLS, TOOL_SPECS, closing_line, execute_tool
+from brain.tools import TERMINAL_TOOLS, closing_line, execute_tool, tool_specs
 from brain.transcript import to_transcript
 from voice.context import context_to_turns
 from voice.latency import attach_latency_logging
@@ -124,13 +124,13 @@ def build_llm(cfg: AppConfig, customer_name: str):
     )
 
 
-def make_tools_schema() -> ToolsSchema:
+def make_tools_schema(cfg: AppConfig) -> ToolsSchema:
     return ToolsSchema(
         standard_tools=[
             FunctionSchema(
                 name=s.name, description=s.description, properties=s.properties, required=s.required
             )
-            for s in TOOL_SPECS
+            for s in tool_specs(cfg.scenario)
         ]
     )
 
@@ -139,7 +139,11 @@ def make_tool_handler(state: CallState, name: str, cfg: AppConfig):
     async def handler(params: FunctionCallParams):
         was_ended = state.ended
         result = execute_tool(
-            state, name, params.arguments, callback_hours=cfg.brain.callback_hours
+            state,
+            name,
+            params.arguments,
+            callback_hours=cfg.brain.callback_hours,
+            scenario=cfg.scenario,
         )
         if state.tool_calls:  # turn index in the spoken conversation (for the transcript)
             state.tool_calls[-1].turn_index = (
@@ -206,10 +210,10 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     logger.info(f"Starting call {state.call_id} (prompt {cfg.brain.prompt_version})")
 
     stt, tts, llm = build_stt(cfg), build_tts(cfg), build_llm(cfg, customer)
-    for spec in TOOL_SPECS:
+    for spec in tool_specs(cfg.scenario):
         llm.register_function(spec.name, make_tool_handler(state, spec.name, cfg))
 
-    context = LLMContext(tools=make_tools_schema())
+    context = LLMContext(tools=make_tools_schema(cfg))
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context, user_params=build_user_params(cfg)
     )
@@ -269,6 +273,7 @@ def write_postcall(state: CallState, context: LLMContext, cfg: AppConfig, starte
             agent_model=cfg.brain.agent_model,
             started_at=started_at,
             stop_reason="agent_ended" if state.ended else "customer_hung_up",
+            scenario=cfg.scenario.id,
         )
         paths = write_voice_records(transcript, cfg.voice.get("calls_dir", "logs/calls"))
         logger.info(f"Post-call records: {', '.join(str(p) for p in paths)}")

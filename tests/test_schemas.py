@@ -47,7 +47,9 @@ def test_invalid_judge_score_rejected():
 
 
 def test_layout_paths(tmp_path):
-    lay = ResultsLayout(tmp_path, "v2")
-    assert lay.transcripts == tmp_path / "v2" / "transcripts"
+    lay = ResultsLayout(tmp_path, "v2")  # default scenario
+    assert lay.transcripts == tmp_path / "personal_loan" / "v2" / "transcripts"
     assert lay.summary.name == "summary.json"
-    assert lay.comparison("v3").name == "compare_v2_v3.json"
+    assert lay.comparison("v3") == tmp_path / "personal_loan" / "compare_v2_v3.json"
+    ins = ResultsLayout(tmp_path, "v3", scenario="health_insurance_renewal")
+    assert ins.costs == tmp_path / "health_insurance_renewal" / "v3" / "costs"

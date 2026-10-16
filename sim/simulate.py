@@ -153,6 +153,7 @@ async def run_call(
             client=customer_client,
             lender_name=cfg.lender_name,
             before_request=limiter,
+            usage=brain.state.usage.customer,
         )
         result = await brain.opening()
         if result.ended:
@@ -179,6 +180,7 @@ async def run_call(
         stop_reason=stop_reason,
         persona_id=persona["id"],
         error=error,
+        scenario=cfg.scenario.id,
     )
 
 

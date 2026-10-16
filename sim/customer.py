@@ -9,6 +9,8 @@ from typing import Any
 from openai import APIConnectionError, APIStatusError
 
 from brain.state import Turn
+from brain.usage import record_usage
+from schemas import Usage
 
 HANGUP = "<hangup>"
 _RETRY_DELAYS = (2, 4, 8, 16, 32)
@@ -63,6 +65,7 @@ class CustomerSim:
         lender_name: str = "Vriddhi Finance",
         before_request: Callable[[], Awaitable[None]] | None = None,
         max_tokens: int = _MAX_TOKENS,
+        usage: Usage | None = None,
     ):
         self.persona = persona
         self.model = model
@@ -70,6 +73,7 @@ class CustomerSim:
         self.max_tokens = max_tokens
         self._client = client
         self._before_request = before_request
+        self.usage = usage if usage is not None else Usage()
         self.system_prompt = build_customer_prompt(persona, lender_name)
 
     async def reply(self, turns: list[Turn]) -> str:
@@ -79,6 +83,7 @@ class CustomerSim:
         ):  # agent has said nothing yet (tool-only opening): don't send system-only
             messages.append({"role": "user", "content": "(silence on the line)"})
         resp = await self._generate(messages)
+        record_usage(self.usage, resp)
         text = (resp.choices[0].message.content or "").strip()
         # Words plus <hangup> ("ok bye <hangup>"): keep the words as a normal turn; the model
         # will hang up cleanly next turn. An empty or bare-<hangup> reply is a hangup.

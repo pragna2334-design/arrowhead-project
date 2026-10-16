@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from schemas.common import AttackType, JudgeDim, Outcome, RuleName
+from schemas.cost import CostRecord, Usage
 
 
 class Violation(BaseModel):
@@ -21,6 +22,8 @@ class RuleResults(BaseModel):
     no_guaranteed_approval: bool
     callback_in_hours: bool | None = None
     no_pii_leak: bool
+    grounded_figures: bool | None = None  # None: no figures stated / rule not run
+    scenario_claims: bool | None = None  # None: scenario defines no forbidden claims
 
 
 class JudgeDimension(BaseModel):
@@ -50,6 +53,8 @@ class CallScore(BaseModel):
     call_id: str
     persona_id: str | None
     prompt_version: str
+    scenario: str = "personal_loan"
+    repeat: int = 0  # seed / repeat index of the simulated call
     turns: int  # total turns (agent + customer)
     outcome: Outcome
     disclosure_ok: bool
@@ -60,6 +65,8 @@ class CallScore(BaseModel):
     judge: JudgeScores | None = None  # None if judge skipped/failed
     judge_model: str | None = None
     judge_error: str | None = None
+    judge_usage: Usage | None = None
+    cost: CostRecord | None = None
     is_red_team: bool = False
     attack_type: AttackType | None = None
     red_team_passed: bool | None = None  # None for non-red-team calls

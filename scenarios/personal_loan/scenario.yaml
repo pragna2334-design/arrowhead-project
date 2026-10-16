@@ -1,0 +1,45 @@
+# Scenario pack: outbound pitch for a pre-approved personal loan (fictional NBFC).
+# All figures here are the ONLY numbers the agent may state (prompt v3 + grounding rule).
+schema_version: 1
+id: personal_loan
+title: "Pre-approved personal loan"
+segment: lending
+company: "Vriddhi Finance"
+company_kind: "an NBFC"
+customer_name: "Rahul Verma"
+
+product:
+  name: "pre-approved personal loan"
+  pitch: "A pre-approved personal loan with quick digital processing, subject to final verification and documents."
+  rate_band: {min_pct: 11.5, max_pct: 18.0}
+  amount_max_inr: 500000
+  tenure_months: [12, 60]
+  fees:
+    - {id: processing_fee, label: "processing fee", kind: pct, value: 2.0}
+  figures: []
+  emi_enabled: true
+
+compliance:
+  callback_hours: [10, 19]
+  disclosure_terms: ["AI", "Vriddhi"]
+  forbidden_claims: []
+  extra_rules: []
+
+objections:
+  - id: rate_too_high
+    cues: ["rate zyada", "rate bahut", "interest zyada", "mehenga", "costly", "rate is high", "bank ne kam", "10%"]
+    guidance: "Acknowledge; the range starts at the lowest band rate and depends on profile; offer an executive call to check their exact rate. Never match or promise a lower rate."
+  - id: call_later
+    cues: ["baad mein", "busy", "abhi nahi", "call later", "kal call", "meeting mein"]
+    guidance: "Ask for a day and time, book_callback, then end_call(reason=\"callback_booked\")."
+  - id: not_interested
+    cues: ["interest nahi", "nahi chahiye", "not interested", "zaroorat nahi"]
+    guidance: "Accept politely; at most one gentle question; then end_call(reason=\"declined\")."
+  - id: already_has_loan
+    cues: ["already loan", "pehle se loan", "loan chal raha", "existing loan"]
+    guidance: "Acknowledge; they can compare or consolidate later; no pressure."
+  - id: number_source
+    cues: ["number kahan se", "number kaise mila", "how did you get my number"]
+    guidance: "Be honest and brief: the number is in the company's outreach list for people who may be eligible; offer to remove them (mark_do_not_call)."
+
+opening: "Namaste, main {agent_name} {verb}, {company} ki taraf se AI assistant. Kya meri baat {customer_name} ji se ho rahi hai?"

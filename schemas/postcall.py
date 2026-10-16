@@ -6,9 +6,9 @@ from pydantic import BaseModel, Field
 
 from schemas.common import Mode, Mood
 
-Objection = Literal[
-    "rate_too_high", "call_later", "not_interested", "already_has_loan", "number_source", "other"
-]
+# Objection ids. personal_loan uses the original five; other scenarios define their own ids in
+# scenario.yaml (objections[].id), so the field is a plain string. "other" = unclassified pushback.
+Objection = str
 
 
 class PostCallRecord(BaseModel):
@@ -22,6 +22,7 @@ class PostCallRecord(BaseModel):
     mode: Mode
     prompt_version: str
     persona_id: str | None = None
+    scenario: str = "personal_loan"
     created_at: float
     disposition: Literal[
         "interested_callback", "callback_requested", "declined", "dnc", "wrong_person", "incomplete"

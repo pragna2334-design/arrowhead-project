@@ -10,8 +10,9 @@ def test_every_prompt_renders(cfg, version):
     text = build_system_prompt(cfg.brain, "Rahul Verma", version)
     assert not re.search(r"\{[a-z_]+\}", text), "unfilled placeholder"
     assert cfg.brain.lender_name in text and "Rahul Verma" in text
-    assert f"{cfg.brain.rate_min_pct}%" in text and f"{cfg.brain.rate_max_pct}%" in text
     assert "mark_do_not_call" in text and "customer_mood" in text
+    if version in ("v1", "v2"):  # loan-only prompts state the band directly
+        assert f"{cfg.brain.rate_min_pct}%" in text and f"{cfg.brain.rate_max_pct}%" in text
 
 
 def test_v1_exists_and_config_selects_it(cfg):

@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from schemas.common import EndReason, Mode, Mood
+from schemas.cost import CallUsage
 
 
 class TranscriptTurn(BaseModel):
@@ -38,6 +39,7 @@ class Transcript(BaseModel):
     mode: Mode
     prompt_version: str
     agent_model: str
+    scenario: str = "personal_loan"
     persona_id: str | None = None  # None for voice calls
     customer_name: str
     started_at: float
@@ -47,3 +49,5 @@ class Transcript(BaseModel):
     turns: list[TranscriptTurn] = Field(default_factory=list)
     tool_calls: list[TranscriptToolCall] = Field(default_factory=list)
     final_state: FinalState
+    usage: CallUsage | None = None  # tokens + spoken chars/words (None in old transcripts)
+    audio_seconds: dict[str, float] | None = None  # voice only: {"stt": s, "tts": s}

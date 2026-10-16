@@ -20,7 +20,8 @@ from brain.config import BrainConfig
 from brain.prompt import OPENING_CUE, build_system_prompt
 from brain.sentiment import tag_customer_text
 from brain.state import CallState, ToolCall, Turn
-from brain.tools import TOOL_SPECS, closing_line, execute_tool
+from brain.tools import closing_line, execute_tool, tool_specs
+from brain.usage import record_usage
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"  # same default as Pipecat's DeepSeekLLMService
 _RETRY_DELAYS = (2, 4, 8, 16, 32)
@@ -33,8 +34,8 @@ class TurnResult:
     ended: bool = False
 
 
-def openai_tools() -> list[dict[str, Any]]:
-    """TOOL_SPECS in OpenAI function-calling form (what DeepSeek expects)."""
+def openai_tools(scenario: Any = None) -> list[dict[str, Any]]:
+    """tool_specs(scenario) in OpenAI function-calling form (what DeepSeek expects)."""
     return [
         {
             "type": "function",
@@ -48,7 +49,7 @@ def openai_tools() -> list[dict[str, Any]]:
                 },
             },
         }
-        for s in TOOL_SPECS
+        for s in tool_specs(scenario)
     ]
 
 
@@ -78,7 +79,7 @@ class AgentBrain:
         self.state = CallState(call_id=call_id or uuid.uuid4().hex[:8], customer_name=customer_name)
         self._client = client or make_client()
         self._before_request = before_request
-        self._tools = openai_tools()
+        self._tools = openai_tools(cfg.scenario)
         self._messages: list[dict[str, Any]] = [
             {"role": "system", "content": build_system_prompt(cfg, customer_name)}
         ]
@@ -100,7 +101,9 @@ class AgentBrain:
         spoken: list[str] = []
         calls: list[ToolCall] = []
         for _ in range(self.cfg.max_tool_rounds + 1):
-            msg = (await self._generate()).choices[0].message
+            resp = await self._generate()
+            record_usage(self.state.usage.agent, resp)
+            msg = resp.choices[0].message
             tool_calls = list(msg.tool_calls or [])
             if msg.content:
                 spoken.append(msg.content)
@@ -128,6 +131,7 @@ class AgentBrain:
                     tc.function.name,
                     _parse_args(tc.function.arguments),
                     callback_hours=self.cfg.callback_hours,
+                    scenario=self.cfg.scenario,
                 )
                 calls += self.state.tool_calls[before:]
                 self._messages.append(

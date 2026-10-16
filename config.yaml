@@ -1,18 +1,7 @@
-# Single source of truth for brain + voice. Voice and text-mode simulator both read this.
+# Global settings for brain + voice + eval. Use-case specifics (company, product terms,
+# compliance rules, objections, opening) live in scenario packs: scenarios/<id>/scenario.yaml.
 
-lender:
-  name: "Vriddhi Finance"            # fictional NBFC
-  product: "pre-approved personal loan"
-  rate_min_pct: 11.5                 # agent may never quote outside [min, max]
-  rate_max_pct: 18.0
-  max_amount_inr: 500000
-  tenure_months: [12, 60]
-
-compliance:
-  callback_hours: [10, 19]           # callbacks allowed 10:00-19:00 local (start incl., end excl.)
-
-customer_default:                    # fictional test data only
-  name: "Rahul Verma"
+scenario: personal_loan              # personal_loan | health_insurance_renewal | credit_card_upgrade (env SCENARIO)
 
 brain:
   agent_name: "Priya"
@@ -23,9 +12,9 @@ brain:
   judge_model: "deepseek-pro"        # VERIFY: model id on your key; must differ from agent_model
   temperature: 0.4
   max_output_tokens: 300
-  thinking: "disabled"               # enabled | disabled. Disabled: V4 models otherwise reason first (slow TTFB)
+  thinking: "disabled"               # enabled | disabled (default disabled). DeepSeek V4 otherwise reasons before answering (+~700 ms)
   max_tool_rounds: 3
-  prompt_version: v1                 # prompts/<version>.md; override with PROMPT_VERSION=v2
+  prompt_version: v1                 # prompts/<version>.md; override with PROMPT_VERSION=v2. v1/v2: personal_loan only; v3: any scenario
 
 stt:
   provider: deepgram                 # deepgram | sarvam   (independent of tts.provider)
@@ -41,6 +30,7 @@ tts:
     model: "bulbul:v3"
     voice: "priya"                   # female. Other bulbul:v3 female: ritu, neha, pooja, simran, kavya, ishita, shreya, roopa
     language: "hi-IN"                # no Hinglish code exists; mixed text is sent as-is
+    text_aggregation: "clause"       # sentence | clause | token: how LLM text is chunked before TTS
   deepgram:
     voice: "aura-2-thalia-en"        # VERIFY: English-only voice, Hinglish quality will drop
   elevenlabs:
@@ -56,7 +46,7 @@ voice:
   latency_target_ms: 500
 
 sim:
-  persona_count: 25                  # first N personas from sim/personas.yaml
+  persona_count: 25                  # first N personas from scenarios/<scenario>/personas.yaml
   max_turns: 16                      # customer turns per call
   rpm: 8                             # LLM requests per minute across agent + customer
   customer_model: "deepseek-flash"   # LLM that plays the customer (VERIFY)
@@ -67,4 +57,33 @@ score:
   rpm: 8
 
 paths:
-  results_dir: "results"             # results/<prompt_version>/{transcripts,postcall,scores,summary.json}
+  results_dir: "results"             # results/<scenario>/<version>/{transcripts,postcall,scores,costs,summary.json}
+
+compare:
+  repeats: 3                         # simulated calls per persona per version (different sampling each run)
+  confidence: 0.95
+  bootstrap_resamples: 2000
+  seed: 7                            # RNG seed for bootstrap resampling (not the LLM)
+
+bench:
+  utterances: 10                     # first N fixed utterances from bench/utterances.yaml
+  repeats: 3
+  out_dir: "logs/bench"
+
+# Unit prices used for cost estimates. ALL VERIFY against your provider dashboards/invoices.
+prices:
+  table: "2026-10-placeholder"
+  currency: "USD"
+  llm:                               # USD per 1M tokens, keyed by model id
+    deepseek-flash: {input: 0.27, cached_input: 0.07, output: 1.10}   # VERIFY
+    deepseek-pro: {input: 0.55, cached_input: 0.14, output: 2.19}     # VERIFY
+  stt:
+    deepgram: {per_minute: 0.0092}   # VERIFY: nova-3 multilingual streaming
+    sarvam: {per_minute: 0.006}      # VERIFY
+  tts:
+    sarvam: {per_1k_chars: 0.018}    # VERIFY: bulbul:v3
+    deepgram: {per_1k_chars: 0.030}  # VERIFY
+    elevenlabs: {per_1k_chars: 0.050}  # VERIFY
+  estimate:                          # text mode has no audio: estimate it from text
+    tts_chars_per_second: 14.0       # Hinglish speech rate (VERIFY with a voice call)
+    stt_words_per_second: 2.5

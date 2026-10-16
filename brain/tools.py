@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from brain.state import CallState, ToolCall
+from schemas import EmiRequest, ScenarioConfig
 
 END_REASONS = ["completed", "declined", "callback_booked", "dnc", "wrong_person", "other"]
 _HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -57,7 +58,37 @@ TOOL_SPECS: list[ToolSpec] = [
     ),
 ]
 
+GROUNDING_SPECS: list[ToolSpec] = [
+    ToolSpec(
+        "get_product_terms",
+        "Official terms of the product on offer (rate band, amounts, tenure, fees, other figures) "
+        "and the allowed callback hours. Call once before stating any figure.",
+        {},
+        [],
+    ),
+    ToolSpec(
+        "calculate_emi",
+        "Exact monthly EMI for a loan amount, an annual interest rate inside the offered band, "
+        "and a tenure in months. Use it for any EMI figure; never compute EMI yourself.",
+        {
+            "principal_inr": {"type": "number", "description": "Loan amount in rupees."},
+            "annual_rate_pct": {"type": "number", "description": "Annual interest rate, percent."},
+            "tenure_months": {"type": "integer", "description": "Tenure in months."},
+        },
+        ["principal_inr", "annual_rate_pct", "tenure_months"],
+    ),
+]
+
 TERMINAL_TOOLS = {"end_call", "mark_do_not_call"}
+
+
+def tool_specs(scenario: ScenarioConfig | None = None) -> list[ToolSpec]:
+    """Tools offered to the LLM: call-control tools + grounding tools (calculate_emi only for
+    products with emi_enabled). Same set for every prompt version, so A/B stays fair."""
+    specs = [*TOOL_SPECS, GROUNDING_SPECS[0]]
+    if scenario is None or scenario.product.emi_enabled:
+        specs.append(GROUNDING_SPECS[1])
+    return specs
 
 
 def parse_hhmm(value: str) -> tuple[int, int] | None:
@@ -76,6 +107,7 @@ def execute_tool(
     args: dict[str, Any] | None,
     *,
     callback_hours: tuple[int, int] = (10, 19),
+    scenario: ScenarioConfig | None = None,
 ) -> dict[str, Any]:
     """Apply a tool call to `state` and return the result sent back to the LLM."""
     args = dict(args or {})
@@ -103,6 +135,8 @@ def execute_tool(
         else:
             state.callback_time = f"{day} {hhmm[0]:02d}:{hhmm[1]:02d}"
             result = {"ok": True, "callback_time": state.callback_time}
+    elif name in ("get_product_terms", "calculate_emi"):
+        result = _grounding_tool(name, args, scenario)
     elif name == "mark_do_not_call":
         state.dnc = True
         state.ended = True
@@ -124,6 +158,29 @@ def execute_tool(
         ToolCall(name=name, args=args, result=result, turn_index=len(state.turns) - 1)
     )
     return result
+
+
+def _grounding_tool(name: str, args: dict[str, Any], scenario: ScenarioConfig | None) -> dict:
+    from brain import finance  # local import: finance is a separate work package
+
+    if scenario is None:
+        from brain.scenario import load_scenario
+
+        scenario = load_scenario()
+    try:
+        if name == "get_product_terms":
+            return finance.get_product_terms(scenario).model_dump(mode="json")
+        if not scenario.product.emi_enabled:
+            return {"ok": False, "error": "EMI is not applicable to this product"}
+        req = EmiRequest.model_validate(args)
+        return finance.calculate_emi(req, scenario).model_dump(mode="json")
+    except ValueError as e:  # pydantic validation of the LLM's arguments
+        return {
+            "ok": False,
+            "error": f"invalid arguments: {e.errors()[0]['msg'] if hasattr(e, 'errors') else e}",
+        }
+    except NotImplementedError:
+        return {"ok": False, "error": f"{name} unavailable"}
 
 
 def closing_line(state: CallState) -> str:

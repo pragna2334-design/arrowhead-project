@@ -9,6 +9,14 @@ class MetricDelta(BaseModel):
     a: float
     b: float
     delta: float  # b - a
+    # Uncertainty (filled when per-call samples are available; None for single values).
+    n_a: int | None = None
+    n_b: int | None = None
+    a_ci95: tuple[float, float] | None = None
+    b_ci95: tuple[float, float] | None = None
+    delta_ci95: tuple[float, float] | None = None
+    significant: bool | None = None  # delta_ci95 excludes 0 (None if not computed)
+    method: str | None = None  # e.g. "wilson", "newcombe", "bootstrap-2000"
 
 
 class PersonaDiff(BaseModel):
@@ -37,3 +45,10 @@ class Comparison(BaseModel):
     per_persona: list[PersonaDiff] = Field(default_factory=list)
     a_summary: Summary
     b_summary: Summary
+    scenario: str = "personal_loan"
+    repeats_per_persona: int | None = None
+    cost_per_call: MetricDelta | None = None
+    hallucinated_figure_rate: MetricDelta | None = None
+    notes: list[str] = Field(
+        default_factory=list
+    )  # e.g. "differences marked n.s. are not significant"

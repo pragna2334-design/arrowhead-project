@@ -20,12 +20,18 @@ def to_transcript(
     persona_id: str | None = None,
     ended_at: float | None = None,
     error: str | None = None,
+    scenario: str = "personal_loan",
+    audio_seconds: dict[str, float] | None = None,
 ) -> Transcript:
+    usage = state.usage.model_copy(deep=True)
+    usage.agent_chars = sum(len(t.text) for t in state.turns if t.role == "agent")
+    usage.customer_words = sum(len(t.text.split()) for t in state.turns if t.role == "customer")
     return Transcript(
         call_id=state.call_id,
         mode=mode,
         prompt_version=prompt_version,
         agent_model=agent_model,
+        scenario=scenario,
         persona_id=persona_id,
         customer_name=state.customer_name,
         started_at=started_at,
@@ -52,4 +58,6 @@ def to_transcript(
             ended=state.ended,
             end_reason=state.end_reason,
         ),
+        usage=usage,
+        audio_seconds=audio_seconds,
     )
