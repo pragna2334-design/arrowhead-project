@@ -16,7 +16,7 @@ dependencies = [
 dev = ["pytest>=8,<10", "ruff==0.16.8"]  # ruff pinned: its default rule set changes between versions
 
 [tool.setuptools]
-packages = ["brain", "voice", "sim", "score", "report", "schemas", "ab"]
+packages = ["brain", "voice", "sim", "score", "report", "schemas", "ab", "bench"]
 
 [tool.ruff]
 line-length = 100

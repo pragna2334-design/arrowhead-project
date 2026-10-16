@@ -90,3 +90,72 @@ def test_callback_handler_enforces_hours(bot, cfg):
     ev = run_tool(bot, cfg, state, "book_callback", {"day": "aaj", "time": "21:00"})
     assert len(ev) == 1 and ev[0][1]["ok"] is False and ev[0][2] is None  # LLM continues
     assert state.callback_time is None and not state.ended
+
+
+@pytest.mark.parametrize("provider", ["sarvam", "deepgram", "elevenlabs"])
+@pytest.mark.parametrize("mode", ["sentence", "clause", "token"])
+def test_tts_constructs_with_each_aggregation_mode(bot, cfg, provider, mode):
+    from pipecat.services.tts_service import TextAggregationMode
+
+    section = {**cfg.tts.get(provider, {}), "text_aggregation": mode}
+    if provider == "elevenlabs":
+        section.update(voice_id="v", model="m")
+    tts = bot.build_tts(
+        dataclasses.replace(cfg, tts={**cfg.tts, "provider": provider, provider: section})
+    )
+    agg = type(tts._text_aggregator).__name__
+    if mode == "token":
+        assert tts._text_aggregation_mode == TextAggregationMode.TOKEN
+    else:
+        assert tts._text_aggregation_mode == TextAggregationMode.SENTENCE
+    assert agg == ("ClauseTextAggregator" if mode == "clause" else "SimpleTextAggregator")
+
+
+def test_tts_aggregation_defaults_and_validation(bot, cfg):
+    assert bot.text_aggregation_mode(cfg) == "clause"  # config.yaml
+    no_key = {k: v for k, v in cfg.tts["sarvam"].items() if k != "text_aggregation"}
+    assert (
+        bot.text_aggregation_mode(dataclasses.replace(cfg, tts={**cfg.tts, "sarvam": no_key}))
+        == "clause"
+    )  # Sarvam default
+    assert (
+        bot.text_aggregation_mode(dataclasses.replace(cfg, tts={**cfg.tts, "provider": "deepgram"}))
+        == "sentence"
+    )  # other providers keep Pipecat's default unless configured
+    bad = {**cfg.tts["sarvam"], "text_aggregation": "words"}
+    with pytest.raises(ValueError):
+        bot.build_tts(dataclasses.replace(cfg, tts={**cfg.tts, "sarvam": bad}))
+
+
+def test_sarvam_min_buffer_size_passthrough(bot, cfg):
+    assert bot.build_tts(cfg)._settings.min_buffer_size == 50  # Pipecat default
+    sec = {**cfg.tts["sarvam"], "min_buffer_size": 12}
+    tts = bot.build_tts(dataclasses.replace(cfg, tts={**cfg.tts, "sarvam": sec}))
+    assert tts._settings.min_buffer_size == 12
+
+
+def _brain(cfg, thinking):
+    return dataclasses.replace(cfg, brain=dataclasses.replace(cfg.brain, thinking=thinking))
+
+
+def test_thinking_flag_reaches_service_and_is_logged(bot, cfg):
+    from loguru import logger
+
+    lines: list[tuple[str, str]] = []
+    sink = logger.add(lambda m: lines.append((m.record["level"].name, m.record["message"])))
+    try:
+        llm = bot.build_llm(cfg, "Rahul Verma")
+        assert llm._settings.thinking.type == "disabled"
+        assert ("INFO", f"LLM {cfg.brain.agent_model}: thinking=disabled (reasoning off)") in lines
+        lines.clear()
+        llm = bot.build_llm(_brain(cfg, "enabled"), "Rahul Verma")
+        assert llm._settings.thinking.type == "enabled"
+        assert any(lvl == "WARNING" and "thinking=enabled" in msg for lvl, msg in lines)
+    finally:
+        logger.remove(sink)
+
+
+@pytest.mark.parametrize("bad", ["off", "Disabled", "", None, True])
+def test_invalid_thinking_value_rejected(bot, cfg, bad):
+    with pytest.raises(ValueError, match="brain.thinking"):
+        bot.build_llm(_brain(cfg, bad), "Rahul Verma")

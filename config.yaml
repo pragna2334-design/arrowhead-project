@@ -31,6 +31,8 @@ tts:
     voice: "priya"                   # female. Other bulbul:v3 female: ritu, neha, pooja, simran, kavya, ishita, shreya, roopa
     language: "hi-IN"                # no Hinglish code exists; mixed text is sent as-is
     text_aggregation: "clause"       # sentence | clause | token: how LLM text is chunked before TTS
+    min_buffer_size: 50              # Sarvam-side buffer (chars) before synthesis; Pipecat default 50. VERIFY a
+                                     # lower value (10-20) live: at 50 a short first clause may wait server-side
   deepgram:
     voice: "aura-2-thalia-en"        # VERIFY: English-only voice, Hinglish quality will drop
   elevenlabs:

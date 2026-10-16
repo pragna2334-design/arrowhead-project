@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "label": "before",
+    "created_at": "2026-10-16T12:00:00+00:00",
+    "model": "deepseek-flash",
+    "thinking": "disabled",
+    "temperature": 0.4,
+    "max_tokens": 300,
+    "prompt_version": "v3",
+    "scenario": "personal_loan",
+    "aggregation": "sentence",
+    "utterances": 3,
+    "repeats": 1,
+    "tts": {
+      "provider": "sarvam",
+      "transport": "websocket",
+      "model": "bulbul:v3",
+      "voice": "priya",
+      "language": "hi-IN",
+      "min_buffer_size": 50,
+      "sample_rate": 24000
+    },
+    "tts_skipped_reason": null
+  },
+  "samples": [
+    {
+      "utterance_id": "u0",
+      "repeat": 0,
+      "mood": "calm",
+      "llm_ttfb_ms": 180.0,
+      "llm_first_text_ms": 700.0,
+      "llm_first_clause_ms": 900.0,
+      "llm_total_ms": 1500.0,
+      "reasoning_chunks": 0,
+      "tool_call": false,
+      "tool_names": [],
+      "first_clause": "Haan ji,",
+      "first_clause_chars": 8,
+      "reply_text": "Haan ji, ...",
+      "tts_connect_ms": 300.0,
+      "tts_ttfb_ms": 175.0,
+      "est_first_audio_ms": 1075.0,
+      "error": null
+    },
+    {
+      "utterance_id": "u1",
+      "repeat": 0,
+      "mood": "calm",
+      "llm_ttfb_ms": 181.0,
+      "llm_first_text_ms": 800.0,
+      "llm_first_clause_ms": 1000.0,
+      "llm_total_ms": 1600.0,
+      "reasoning_chunks": 0,
+      "tool_call": false,
+      "tool_names": [],
+      "first_clause": "Haan ji,",
+      "first_clause_chars": 8,
+      "reply_text": "Haan ji, ...",
+      "tts_connect_ms": 300.0,
+      "tts_ttfb_ms": 175.0,
+      "est_first_audio_ms": 1175.0,
+      "error": null
+    },
+    {
+      "utterance_id": "u2",
+      "repeat": 0,
+      "mood": "calm",
+      "llm_ttfb_ms": 182.0,
+      "llm_first_text_ms": 900.0,
+      "llm_first_clause_ms": 1100.0,
+      "llm_total_ms": 1700.0,
+      "reasoning_chunks": 0,
+      "tool_call": false,
+      "tool_names": [],
+      "first_clause": "Haan ji,",
+      "first_clause_chars": 8,
+      "reply_text": "Haan ji, ...",
+      "tts_connect_ms": 300.0,
+      "tts_ttfb_ms": 175.0,
+      "est_first_audio_ms": 1275.0,
+      "error": null
+    }
+  ],
+  "stats": {
+    "llm_ttfb_ms": {
+      "n": 3,
+      "p50": 181.0,
+      "p95": 181.9,
+      "mean": 181.0,
+      "min": 180.0,
+      "max": 182.0
+    },
+    "llm_first_text_ms": {
+      "n": 3,
+      "p50": 800.0,
+      "p95": 890.0,
+      "mean": 800.0,
+      "min": 700.0,
+      "max": 900.0
+    },
+    "llm_first_clause_ms": {
+      "n": 3,
+      "p50": 1000.0,
+      "p95": 1090.0,
+      "mean": 1000.0,
+      "min": 900.0,
+      "max": 1100.0
+    },
+    "llm_total_ms": {
+      "n": 3,
+      "p50": 1600.0,
+      "p95": 1690.0,
+      "mean": 1600.0,
+      "min": 1500.0,
+      "max": 1700.0
+    },
+    "tts_ttfb_ms": {
+      "n": 3,
+      "p50": 175.0,
+      "p95": 175.0,
+      "mean": 175.0,
+      "min": 175.0,
+      "max": 175.0
+    },
+    "est_first_audio_ms": {
+      "n": 3,
+      "p50": 1175.0,
+      "p95": 1265.0,
+      "mean": 1175.0,
+      "min": 1075.0,
+      "max": 1275.0
+    },
+    "reasoning_chunks": {
+      "n": 3,
+      "p50": 0.0,
+      "p95": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    }
+  }
+}

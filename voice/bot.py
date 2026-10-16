@@ -58,8 +58,11 @@ from brain.redact import install_log_redaction
 from brain.state import CallState
 from brain.tools import TERMINAL_TOOLS, closing_line, execute_tool, tool_specs
 from brain.transcript import to_transcript
+from voice.aggregation import apply_text_aggregation, tts_aggregation_kwargs
+from voice.chunking import DEFAULT_AGGREGATION, parse_aggregation_mode
 from voice.context import context_to_turns
 from voice.latency import attach_latency_logging
+from voice.llm_settings import log_thinking, validate_thinking
 from voice.mood import MoodTagger
 
 load_dotenv(override=True)
@@ -86,32 +89,64 @@ def build_stt(cfg: AppConfig):
     raise ValueError(f"unknown stt.provider: {provider}")
 
 
+# Default chunking per TTS provider when its config has no `text_aggregation` key.
+DEFAULT_TEXT_AGGREGATION = {
+    "sarvam": DEFAULT_AGGREGATION,
+    "deepgram": "sentence",
+    "elevenlabs": "sentence",
+}
+
+
+def text_aggregation_mode(cfg: AppConfig) -> str:
+    """tts.<provider>.text_aggregation (sentence | clause | token), validated."""
+    provider = cfg.tts["provider"]
+    section = cfg.tts.get(provider) or {}
+    return parse_aggregation_mode(
+        section.get("text_aggregation", DEFAULT_TEXT_AGGREGATION.get(provider, "sentence"))
+    )
+
+
 def build_tts(cfg: AppConfig):
     provider = cfg.tts["provider"]
+    if provider not in DEFAULT_TEXT_AGGREGATION:
+        raise ValueError(f"unknown tts.provider: {provider}")
+    mode = text_aggregation_mode(cfg)
+    agg = tts_aggregation_kwargs(mode)
     if provider == "sarvam":
         c = cfg.tts["sarvam"]
-        return SarvamTTSService(
+        extra = {}
+        if c.get("min_buffer_size") is not None:
+            # Sarvam's websocket holds text until this many chars arrive (Pipecat default 50);
+            # a short first clause is only synthesized once the buffer fills or the turn ends.
+            extra["min_buffer_size"] = int(c["min_buffer_size"])
+        tts = SarvamTTSService(
             api_key=os.environ["SARVAM_API_KEY"],
             settings=SarvamTTSService.Settings(
-                model=c["model"], voice=c["voice"], language=Language(c["language"])
+                model=c["model"], voice=c["voice"], language=Language(c["language"]), **extra
             ),
+            **agg,
         )
-    if provider == "deepgram":
-        return DeepgramTTSService(
+    elif provider == "deepgram":
+        tts = DeepgramTTSService(
             api_key=os.environ["DEEPGRAM_API_KEY"],
             settings=DeepgramTTSService.Settings(voice=cfg.tts["deepgram"]["voice"]),
+            **agg,
         )
-    if provider == "elevenlabs":
+    else:
         c = cfg.tts["elevenlabs"]
-        return ElevenLabsTTSService(
+        tts = ElevenLabsTTSService(
             api_key=os.environ["ELEVENLABS_API_KEY"],
             settings=ElevenLabsTTSService.Settings(voice=c["voice_id"], model=c["model"]),
+            **agg,
         )
-    raise ValueError(f"unknown tts.provider: {provider}")
+    logger.info(f"TTS {provider}: text_aggregation={mode}")
+    return apply_text_aggregation(tts, mode)
 
 
 def build_llm(cfg: AppConfig, customer_name: str):
     b = cfg.brain
+    thinking = validate_thinking(b.thinking)  # ValueError on anything but enabled|disabled
+    log_thinking(b.agent_model, thinking)
     return DeepSeekLLMService(
         api_key=os.environ["DEEPSEEK_API_KEY"],
         settings=DeepSeekLLMService.Settings(
@@ -119,7 +154,7 @@ def build_llm(cfg: AppConfig, customer_name: str):
             system_instruction=build_system_prompt(b, customer_name),
             temperature=b.temperature,
             max_tokens=b.max_output_tokens,
-            thinking=DeepSeekLLMService.ThinkingConfig(type=b.thinking),
+            thinking=DeepSeekLLMService.ThinkingConfig(type=thinking),
         ),
     )
 

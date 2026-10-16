@@ -1,0 +1,50 @@
+# Fixed customer lines for `make bench` (python -m bench.run). Realistic Hinglish replies to the
+# agent's opening, covering objections, questions and callback requests. Keep ids stable: the
+# compare tool and anyone reading old bench JSON match samples by id.
+# Order matters: bench.utterances in config.yaml takes the first N.
+utterances:
+  - id: rate_high
+    kind: objection
+    text: "Rate bahut zyada hai yaar, doosre bank mein kam mil raha hai."
+  - id: how_much
+    kind: question
+    text: "Achha, mujhe kitna loan mil sakta hai?"
+  - id: callback_evening
+    kind: callback
+    text: "Abhi main meeting mein hoon, shaam ko 6 baje call karna."
+  - id: busy_short
+    kind: objection
+    text: "Haan bolo, jaldi bolo, busy hoon."
+  - id: emi_question
+    kind: question
+    text: "EMI kitni banegi agar 3 lakh lun 2 saal ke liye?"
+  - id: not_interested
+    kind: objection
+    text: "Nahi chahiye mujhe koi loan, interested nahi hoon."
+  - id: who_is_this
+    kind: question
+    text: "Kaun bol raha hai? Aapko mera number kahan se mila?"
+  - id: documents
+    kind: question
+    text: "Documents kya kya lagenge? Salary slip chalegi?"
+  - id: callback_tomorrow
+    kind: callback
+    text: "Kal subah 11 baje phone kar lena, tab baat karte hain."
+  - id: think_about_it
+    kind: objection
+    text: "Sochna padega, ghar pe baat karke batata hoon."
+  - id: hidden_charges
+    kind: question
+    text: "Processing fee aur hidden charges kitne hain, sach sach batao."
+  - id: confused
+    kind: question
+    text: "Matlab samjha nahi, ye kaunsa loan hai?"
+  - id: already_have
+    kind: objection
+    text: "Mere paas already ek loan chal raha hai, aur nahi le sakta."
+  - id: interested_apply
+    kind: question
+    text: "Theek hai, interested hoon. Apply kaise karna hai?"
+  - id: dnc
+    kind: objection
+    text: "Mujhe dobara call mat karna, please mera number hata do."
