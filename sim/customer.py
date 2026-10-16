@@ -24,11 +24,19 @@ _LANGUAGE_RULES = {
 }
 
 
-def build_customer_prompt(persona: dict[str, Any], lender_name: str = "Vriddhi Finance") -> str:
+def build_customer_prompt(
+    persona: dict[str, Any],
+    lender_name: str = "Vriddhi Finance",
+    *,
+    company_kind: str = "an NBFC",
+    product: str = "pre-approved personal loan",
+) -> str:
+    """System prompt for the customer LLM. `lender_name` is the calling company (any segment);
+    `company_kind` and `product` come from the scenario pack."""
     lang = _LANGUAGE_RULES.get(persona.get("language", "hinglish"), _LANGUAGE_RULES["hinglish"])
     return (
         f"You are role-playing a person in India who has just answered an outbound phone call "
-        f"from {lender_name}, a loan company. The phone is registered to "
+        f"from {lender_name}, {company_kind}, about: {product}. The phone is registered to "
         f"{persona['customer_name']}.\n\n"
         f"# Your character\n{persona['description']}\n\n"
         f"# How you behave\n{persona['behaviour'].strip()}\n\n"
@@ -63,6 +71,8 @@ class CustomerSim:
         temperature: float,
         client: Any,
         lender_name: str = "Vriddhi Finance",
+        company_kind: str = "an NBFC",
+        product: str = "pre-approved personal loan",
         before_request: Callable[[], Awaitable[None]] | None = None,
         max_tokens: int = _MAX_TOKENS,
         usage: Usage | None = None,
@@ -74,7 +84,9 @@ class CustomerSim:
         self._client = client
         self._before_request = before_request
         self.usage = usage if usage is not None else Usage()
-        self.system_prompt = build_customer_prompt(persona, lender_name)
+        self.system_prompt = build_customer_prompt(
+            persona, lender_name, company_kind=company_kind, product=product
+        )
 
     async def reply(self, turns: list[Turn]) -> str:
         messages = [{"role": "system", "content": self.system_prompt}, *flip_roles(turns)]

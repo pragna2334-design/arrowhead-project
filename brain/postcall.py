@@ -1,8 +1,10 @@
 """Post-call intelligence: turn a finished Transcript into a CRM-ready PostCallRecord.
 
 Deterministic and offline (keyword rules, no LLM), so it costs nothing and can be re-run.
+Objection ids come from the transcript's scenario pack (scenario.yaml objections[].id/cues).
 
-    python -m brain.postcall [--version v1] [--results results] [--fresh]
+    python -m brain.postcall [--scenario personal_loan] [--version v1] [--results results]
+                             [--fresh]
 """
 
 from __future__ import annotations
@@ -10,17 +12,22 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 import time
 from collections.abc import Iterable
+from functools import lru_cache
 from pathlib import Path
-from typing import get_args
 
 from brain.redact import redact, redact_obj
-from schemas import PostCallRecord, ResultsLayout, Transcript
+from brain.scenario import DEFAULT_SCENARIO, load_scenario
+from schemas import PostCallRecord, ResultsLayout, ScenarioConfig, Transcript
 from schemas.postcall import Objection
 
 # --- objection detection -------------------------------------------------------------------
 
+# Built-in, hand-tuned regex cues per objection id. They apply to every scenario that defines
+# an objection with that id (merged with that scenario's own literal `cues`), so generic ids
+# (call_later, not_interested, number_source) get the same quality everywhere.
 # Each cue is a regex fragment matched against lower-cased customer text. Latin cues are
 # wrapped in word boundaries (so "later" does not hit "translater"); Devanagari cues are not.
 _OBJECTION_CUES: dict[Objection, tuple[str, ...]] = {
@@ -86,21 +93,70 @@ def _wrap(cue: str) -> str:
     return rf"(?<![a-z])(?:{cue})(?![a-z])" if cue.isascii() else f"(?:{cue})"
 
 
-_OBJECTION_RES: dict[Objection, re.Pattern[str]] = {
-    obj: re.compile("|".join(_wrap(c) for c in cues)) for obj, cues in _OBJECTION_CUES.items()
-}
+def _literal(cue: str) -> str:
+    """A scenario cue is a plain phrase: escape it and let any whitespace run match."""
+    return r"\s+".join(re.escape(w) for w in cue.lower().split())
+
+
 _NEGATIVE_RE = re.compile("|".join(_wrap(c) for c in _NEGATIVE_CUES))
+_SCENARIO_ID = re.compile(r"[a-z0-9_]+")
 
-OBJECTIONS: tuple[Objection, ...] = get_args(Objection)
+# The original personal-loan ids, kept for callers that imported this name.
+OBJECTIONS: tuple[Objection, ...] = tuple(_OBJECTION_CUES)
+
+_Plays = tuple[tuple[str, tuple[str, ...]], ...]  # ((objection id, cues), ...)
+_Patterns = tuple[tuple[Objection, re.Pattern[str]], ...]
 
 
-def detect_objections(texts: Iterable[str]) -> list[Objection]:
-    """Objections raised across customer turns, de-duplicated in first-seen order."""
+@lru_cache(maxsize=32)
+def _compile_plays(plays: _Plays) -> _Patterns:
+    out = []
+    for obj, cues in plays:
+        frags = [*_OBJECTION_CUES.get(obj, ()), *(_literal(c) for c in cues if c.strip())]
+        if frags:
+            out.append((obj, re.compile("|".join(_wrap(f) for f in frags))))
+    return tuple(out)
+
+
+def _plays_of(sc: ScenarioConfig) -> _Plays:
+    return tuple((o.id, tuple(o.cues)) for o in sc.objections)
+
+
+# Unknown/unloadable scenario: fall back to the built-in personal-loan detectors.
+_BUILTIN_PLAYS: _Plays = tuple((o, ()) for o in _OBJECTION_CUES)
+
+
+def _resolve(scenario: str | ScenarioConfig | None) -> ScenarioConfig | None:
+    if isinstance(scenario, ScenarioConfig):
+        return scenario
+    sid = scenario or DEFAULT_SCENARIO
+    if not _SCENARIO_ID.fullmatch(sid):  # ids come from transcripts: no path tricks
+        return None
+    try:
+        return load_scenario(sid)
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def objection_patterns(scenario: str | ScenarioConfig | None = None) -> _Patterns:
+    """(objection id, compiled cue regex) in the scenario's playbook order."""
+    sc = _resolve(scenario)
+    return _compile_plays(_plays_of(sc) if sc is not None else _BUILTIN_PLAYS)
+
+
+def detect_objections(
+    texts: Iterable[str], scenario: str | ScenarioConfig | None = None
+) -> list[Objection]:
+    """Objections raised across customer turns, de-duplicated in first-seen order.
+
+    Ids come from the scenario's objection playbook (default: personal_loan); clearly negative
+    pushback that matches none of them is "other"."""
+    patterns = objection_patterns(scenario)
     found: list[Objection] = []
     for text in texts:
         t = text.lower()
         # Specific objections, in the order they appear within the turn.
-        positions = {o: m.start() for o, p in _OBJECTION_RES.items() if (m := p.search(t))}
+        positions = {o: m.start() for o, p in patterns if (m := p.search(t))}
         hits: list[Objection] = sorted(positions, key=positions.__getitem__)
         if not hits and _NEGATIVE_RE.search(t):
             hits = ["other"]
@@ -140,8 +196,18 @@ _OBJECTION_PHRASE: dict[Objection, str] = {
     "not_interested": "said they are not interested",
     "already_has_loan": "mentioned an existing loan",
     "number_source": "asked how we got their number",
+    "premium_too_high": "objected to the premium",
+    "has_employer_cover": "mentioned employer health cover",
+    "bad_claim_experience": "mentioned a bad claim experience",
+    "annual_fee_high": "objected to the annual fee",
+    "already_have_card": "mentioned an existing card",
+    "debt_concern": "raised a debt concern",
     "other": "pushed back",
 }
+
+
+def _phrase(objection: Objection) -> str:
+    return _OBJECTION_PHRASE.get(objection) or f"raised '{objection.replace('_', ' ')}'"
 
 
 def _summary(disposition: str, objections: list[Objection], callback_time: str | None) -> str:
@@ -154,7 +220,7 @@ def _summary(disposition: str, objections: list[Objection], callback_time: str |
         "wrong_person": "was not the intended person; call ended.",
         "incomplete": "call ended before any outcome.",
     }[disposition]
-    parts = [_OBJECTION_PHRASE[o] for o in objections]
+    parts = [_phrase(o) for o in objections]
     if disposition == "incomplete" and not parts:
         text = "Call ended before any outcome."
     else:
@@ -165,7 +231,7 @@ def _summary(disposition: str, objections: list[Objection], callback_time: str |
 def build_postcall_record(t: Transcript, *, created_at: float | None = None) -> PostCallRecord:
     """Deterministic CRM record for one call (no LLM). `created_at` defaults to now."""
     customer = [turn for turn in t.turns if turn.role == "customer"]
-    objections = detect_objections(turn.text for turn in customer)
+    objections = detect_objections((turn.text for turn in customer), t.scenario)
     trajectory = [turn.sentiment for turn in customer if turn.sentiment is not None]
     disposition = _disposition(t)
     fs = t.final_state
@@ -174,6 +240,7 @@ def build_postcall_record(t: Transcript, *, created_at: float | None = None) -> 
         mode=t.mode,
         prompt_version=t.prompt_version,
         persona_id=t.persona_id,
+        scenario=t.scenario,
         created_at=time.time() if created_at is None else created_at,
         disposition=disposition,
         objections=objections,
@@ -198,9 +265,17 @@ def _write_json(path: Path, data: object) -> None:
     tmp.replace(path)
 
 
-def write_postcall_records(version: str, results_dir: str = "results", fresh: bool = False) -> int:
-    """Build results/<v>/postcall/<call_id>.json for every transcript; return count written."""
-    layout = ResultsLayout(root=Path(results_dir), version=version)
+def write_postcall_records(
+    version: str,
+    results_dir: str | Path = "results",
+    fresh: bool = False,
+    scenario: str | None = None,
+) -> int:
+    """Build results/<scenario>/<v>/postcall/<call_id>.json for every transcript; return count
+    written. `scenario` defaults to personal_loan."""
+    layout = ResultsLayout(
+        root=Path(results_dir), version=version, scenario=scenario or DEFAULT_SCENARIO
+    )
     if not layout.transcripts.is_dir():
         return 0
     written = 0
@@ -235,19 +310,24 @@ def write_voice_records(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m brain.postcall", description=__doc__)
+    parser.add_argument("--scenario", default=None, help="scenario id (default: env/config)")
     parser.add_argument("--version", default=None, help="prompt version (default: config)")
     parser.add_argument("--results", default=None, help="results dir (default: config)")
     parser.add_argument("--fresh", action="store_true", help="overwrite existing records")
     args = parser.parse_args(argv)
-    version, results = args.version, args.results
-    if version is None or results is None:
-        from brain.config import load_config
+    from brain.config import load_config
 
-        cfg = load_config(prompt_version=version)
-        version = version or cfg.brain.prompt_version
-        results = results or cfg.results_dir
-    n = write_postcall_records(version, results, fresh=args.fresh)
-    print(f"postcall: wrote {n} record(s) to {Path(results) / version / 'postcall'}")
+    try:
+        cfg = load_config(prompt_version=args.version, scenario=args.scenario)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"bad config: {e}", file=sys.stderr)
+        return 2
+    version = args.version or cfg.brain.prompt_version
+    results = args.results or cfg.results_dir
+    scenario = cfg.scenario.id
+    n = write_postcall_records(version, results, fresh=args.fresh, scenario=scenario)
+    out = ResultsLayout(Path(results), version, scenario=scenario).postcall
+    print(f"postcall: wrote {n} record(s) to {out}")
     return 0
 
 

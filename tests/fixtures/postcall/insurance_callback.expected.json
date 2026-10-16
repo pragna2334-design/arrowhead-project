@@ -1,0 +1,13 @@
+{
+  "scenario": "health_insurance_renewal",
+  "disposition": "interested_callback",
+  "objections": [
+    "premium_too_high",
+    "has_employer_cover"
+  ],
+  "consent_status": "given",
+  "next_action": "executive_callback",
+  "callback_time": "tomorrow 11:00",
+  "final_sentiment": "calm",
+  "summary": "Customer objected to the premium, mentioned employer health cover, consented to an executive call; callback booked for tomorrow 11:00."
+}

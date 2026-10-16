@@ -320,3 +320,117 @@ def test_rate_limiter_disabled():
     lim = RateLimiter(0, clock=lambda: 0.0, sleep=lambda s: pytest.fail("slept"))
     asyncio.run(lim.wait())
     asyncio.run(lim.wait())
+
+
+# ---------------------------------------------------------------- scenarios
+
+
+def _scenario_app(scenario: str, version: str = "v3", max_turns: int = 16):
+    app = load_config(prompt_version=version, scenario=scenario)
+    return replace(app, sim={**app.sim, "max_turns": max_turns})
+
+
+@pytest.mark.parametrize("scenario", ["health_insurance_renewal", "credit_card_upgrade"])
+def test_non_loan_scenario_end_to_end(tmp_path, scenario):
+    app = _scenario_app(scenario)
+    sc = app.scenario
+    persona = {**load_personas(scenario=scenario)[0]}
+    opening = _msg(f"Namaste, main Priya, {sc.company} ki taraf se AI assistant.")
+    script = Script(
+        agent=[opening, _msg(None, "end_call", {"reason": "declined"})],
+        customer=[_msg("Nahi chahiye, thanks.")],
+    )
+    c = client(script)
+    out = asyncio.run(
+        run_sim(
+            app,
+            personas=[persona],
+            results_dir=tmp_path,
+            agent_client=c,
+            customer_client=c,
+            limiter=_noop,
+            log=lambda *_: None,
+        )
+    )
+    call_id = f"v3-{persona['id']}-1"
+    assert out == {call_id: "agent_ended"}
+    layout = ResultsLayout(tmp_path, "v3", scenario=scenario)
+    assert layout.transcripts == tmp_path / scenario / "v3" / "transcripts"
+    tr = Transcript.model_validate_json((layout.transcripts / f"{call_id}.json").read_text())
+    assert tr.scenario == scenario and tr.prompt_version == "v3"
+    assert tr.customer_name == sc.customer_name
+    state = json.loads(layout.sim_state.read_text())
+    assert state["scenario"] == scenario and state["finished"] == [call_id]
+    assert not (tmp_path / "personal_loan").exists()
+    # The customer LLM is told which company and product is calling, not a loan.
+    cust_system = next(r for r in script.requests if "tools" not in r)["messages"][0]["content"]
+    assert sc.company in cust_system and sc.product.name in cust_system
+    assert "loan" not in cust_system.lower()
+    # The agent got the scenario's v3 system prompt.
+    agent_system = script.requests[0]["messages"][0]["content"]
+    assert sc.company in agent_system
+
+
+def test_customer_prompt_defaults_to_personal_loan():
+    from sim.customer import build_customer_prompt
+
+    text = build_customer_prompt(PERSONA)
+    assert "Vriddhi Finance, an NBFC, about: pre-approved personal loan" in text
+
+
+def test_main_v1_with_non_loan_scenario_exits_2(monkeypatch, capsys):
+    from sim import simulate
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")  # setup must fail on the prompt, not the key
+
+    def boom(*a, **kw):  # pragma: no cover - must never be reached
+        raise AssertionError("no LLM client may be created")
+
+    monkeypatch.setattr(simulate, "make_client", boom)
+    monkeypatch.setattr(simulate, "run_sim", boom)
+    for version in ("v1", "v2"):
+        assert simulate.main(["--scenario", "credit_card_upgrade", "--version", version]) == 2
+        err = capsys.readouterr().err
+        assert f"prompt {version}" in err and "credit_card_upgrade" in err
+
+
+def test_main_unknown_scenario_exits_2(monkeypatch, capsys):
+    from sim import simulate
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    assert simulate.main(["--scenario", "no_such_scenario"]) == 2
+    assert "no_such_scenario" in capsys.readouterr().err
+
+
+def test_main_loads_scenario_personas(monkeypatch, tmp_path):
+    from sim import simulate
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    seen = {}
+
+    async def fake_run_sim(app, *, personas, repeats, fresh, results_dir):
+        seen.update(app=app, personas=personas, results_dir=results_dir)
+        return {}
+
+    monkeypatch.setattr(simulate, "run_sim", fake_run_sim)
+    argv = ["--scenario", "health_insurance_renewal", "--version", "v3", "--n", "3"]
+    assert simulate.main([*argv, "--results", str(tmp_path)]) == 0
+    assert seen["app"].scenario.id == "health_insurance_renewal"
+    ids = [p["id"] for p in seen["personas"]]
+    assert ids == [p["id"] for p in load_personas(scenario="health_insurance_renewal")[:3]]
+
+
+def test_main_scenario_from_env(monkeypatch):
+    from sim import simulate
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    monkeypatch.setenv("SCENARIO", "credit_card_upgrade")
+    seen = {}
+
+    async def fake_run_sim(app, **kw):
+        seen["scenario"] = app.scenario.id
+        return {}
+
+    monkeypatch.setattr(simulate, "run_sim", fake_run_sim)
+    assert simulate.main(["--version", "v3", "--n", "1"]) == 0
+    assert seen["scenario"] == "credit_card_upgrade"

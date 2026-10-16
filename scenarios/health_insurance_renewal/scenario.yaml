@@ -1,0 +1,75 @@
+# Scenario pack: renewal call for a family-floater health insurance policy (fictional insurer).
+# All figures here are the ONLY numbers the agent may state (prompt v3 + grounding rule).
+# Compliance wording is illustrative (IRDAI-style), not legal advice.
+schema_version: 1
+id: health_insurance_renewal
+title: "Family-floater health policy renewal"
+segment: insurance
+company: "Kavach General Insurance"
+company_kind: "a general insurer"
+customer_name: "Anjali Mehra"
+
+product:
+  name: "family-floater health insurance policy renewal"
+  pitch: "The customer's Kavach family-floater health policy is due for renewal soon; renewing on time keeps continuity benefits such as waiting periods already served and the accumulated no-claim bonus. Renewal is the customer's choice, and policy terms, exclusions and waiting periods apply."
+  rate_band: null
+  amount_max_inr: null
+  tenure_months: null
+  fees: []
+  figures:
+    - {id: renewal_premium, label: "annual renewal premium (incl. GST)", value: 24500, unit: inr}
+    - {id: sum_insured, label: "family-floater sum insured", value: 1000000, unit: inr}
+    - {id: no_claim_bonus, label: "accumulated no-claim bonus on the sum insured", value: 20, unit: pct}
+    - {id: members_covered, label: "family members covered", value: 4, unit: count}
+    - {id: renewal_due_in, label: "days until the renewal due date", value: 12, unit: days}
+    - {id: grace_period, label: "grace period after the due date", value: 30, unit: days}
+    - {id: ped_waiting_period, label: "waiting period for pre-existing diseases (from first policy)", value: 36, unit: months}
+    - {id: policy_term, label: "policy term", value: 1, unit: years}
+  emi_enabled: false
+
+compliance:
+  callback_hours: [10, 19]
+  disclosure_terms: ["AI", "Kavach"]
+  # Regexes matched (case-insensitive, negation-aware) against agent turns by
+  # score/scenario_rules.py.
+  forbidden_claims:
+    - "all (diseases|illnesses|treatments|conditions|bimariyan|bimariyon)( are| is| will be)? (fully )?covered"
+    - "(sab|saari|sabhi|har) (bimari|bimariyan|bimariyon|treatment|ilaaj)( ka| ki)?( bhi)? (cover|covered)"
+    - "no waiting periods?"
+    - "waiting period (bilkul |koi )?(nahi|nahin) (hai|hoga|hota|lagega|lagta)"
+    - "claims?( is| are| will be| hamesha)? (guaranteed|pakka|100\\s*%)"
+    - "(guaranteed|pakka) claim"
+    - "100\\s*% claims?"
+    - "premium (will )?(never|kabhi nahi|kabhi nahin) (increase|go up|badhega|badhta|badhegi)"
+    - "premium (is |will be |hamesha )?(fixed|locked) (for life|forever|hamesha)"
+    - "pre[- ]?existing (diseases?|illness(es)?|conditions?|bimari\\w*)?\\s*(are |is |bhi )?covered from (day one|day 1|the first day|pehle din)"
+    - "(day one|day 1|pehle din) se (hi )?(pre[- ]?existing|ped)"
+  extra_rules:
+    - "Never claim that all diseases or treatments are covered; coverage is subject to the policy terms, exclusions and sub-limits."
+    - "Whenever you describe coverage, say that policy terms and waiting periods apply; never say pre-existing diseases are covered from day one."
+    - "Never say a claim is guaranteed or will always be paid; claims are settled as per the policy terms."
+    - "Do not use fear about a lapse, illness or hospital bills to push the renewal; you may state factually that renewing before the grace period ends keeps continuity benefits."
+    - "Renewal is the customer's choice: accept a no politely, never pressure, and never promise that the premium will not change in future years."
+    - "Do not collect payment, card details or medical history on this call; an executive or the official renewal link handles that."
+
+objections:
+  - id: premium_too_high
+    cues: ["premium zyada", "premium bahut", "premium badh", "itna premium", "mehenga", "mehnga", "costly", "expensive", "premium is high", "premium is too high", "too expensive", "afford nahi", "प्रीमियम ज़्यादा", "महंगा"]
+    guidance: "Acknowledge the cost; explain plainly what the premium includes (sum insured, accumulated no-claim bonus) using get_product_terms; offer an executive call to review options. Never promise a discount or that the premium won't change."
+  - id: has_employer_cover
+    cues: ["company insurance", "office se insurance", "office ka insurance", "office ka mediclaim", "employer cover", "employer", "corporate policy", "company ki policy", "group insurance", "company deti hai", "company se cover", "कंपनी का इंश्योरेंस"]
+    guidance: "Acknowledge; employer cover usually ends when the job changes or at retirement, while a personal policy keeps its continuity; let them decide, no pressure."
+  - id: bad_claim_experience
+    cues: ["claim reject", "claim rejected", "claim nahi mila", "claim settle nahi", "claim mein problem", "claim mein dikkat", "claim nahi diya", "paisa nahi diya", "bad experience", "bura experience", "क्लेम रिजेक्ट", "क्लेम नहीं मिला"]
+    guidance: "Apologise once and listen; do not argue about the past claim or promise future claims will be paid; offer an executive or grievance callback to review it."
+  - id: call_later
+    cues: ["baad mein", "busy", "abhi nahi", "call later", "kal call", "meeting mein"]
+    guidance: "Ask for a day and time, book_callback, then end_call(reason=\"callback_booked\")."
+  - id: not_interested
+    cues: ["interest nahi", "nahi chahiye", "not interested", "zaroorat nahi", "renew nahi", "renew nahi karna", "don't want to renew"]
+    guidance: "Accept politely; renewal is their choice; at most one gentle factual note about the grace period; then end_call(reason=\"declined\")."
+  - id: number_source
+    cues: ["number kahan se", "number kaise mila", "how did you get my number"]
+    guidance: "Be honest and brief: you are calling because they hold a policy with the company that is due for renewal; offer to remove them from calls (mark_do_not_call)."
+
+opening: "Namaste, main {agent_name} {verb}, {company} ki taraf se AI assistant, aapki health policy ke renewal ke baare mein. Kya meri baat {customer_name} ji se ho rahi hai?"

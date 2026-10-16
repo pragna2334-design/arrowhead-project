@@ -1,0 +1,14 @@
+{
+  "scenario": "credit_card_upgrade",
+  "disposition": "declined",
+  "objections": [
+    "already_have_card",
+    "not_interested",
+    "debt_concern"
+  ],
+  "consent_status": "not_given",
+  "next_action": "no_action",
+  "callback_time": null,
+  "final_sentiment": "annoyed",
+  "summary": "Customer mentioned an existing card, said they are not interested, raised a debt concern, declined the offer."
+}

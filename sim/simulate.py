@@ -1,11 +1,12 @@
-"""Text-mode simulator: an LLM plays each persona in sim/personas.yaml against AgentBrain.
+"""Text-mode simulator: an LLM plays each persona of a scenario pack against AgentBrain.
 
-    python -m sim.simulate [--version v1] [--n 25] [--personas id1,id2] [--repeats 1]
-                           [--fresh] [--results results]
+    python -m sim.simulate [--scenario personal_loan] [--version v1] [--n 25]
+                           [--personas id1,id2] [--repeats 1] [--fresh] [--results results]
 
-Writes one Transcript per call to results/<version>/transcripts/<call_id>.json and keeps
-resume state in results/<version>/sim_state.json. Never scores and never builds post-call
-records: those are separate steps, so re-scoring never re-simulates.
+Personas come from scenarios/<scenario>/personas.yaml. Writes one Transcript per call to
+results/<scenario>/<version>/transcripts/<call_id>.json and keeps resume state in
+results/<scenario>/<version>/sim_state.json. Never scores and never builds post-call records:
+those are separate steps, so re-scoring never re-simulates.
 """
 
 from __future__ import annotations
@@ -24,14 +25,15 @@ import yaml
 
 from brain.agent import AgentBrain, make_client
 from brain.config import AppConfig, load_config
-from brain.prompt import available_versions
+from brain.prompt import available_versions, build_system_prompt
+from brain.scenario import DEFAULT_SCENARIO, personas_path
 from brain.state import CallState
 from brain.transcript import to_transcript
 from schemas import ResultsLayout, Transcript
 from sim.customer import HANGUP, CustomerSim
 from sim.ratelimit import RateLimiter
 
-PERSONAS_PATH = Path(__file__).resolve().parent / "personas.yaml"
+PERSONAS_PATH = personas_path(DEFAULT_SCENARIO)  # default pack; see load_personas(scenario=)
 PERSONA_KEYS = (
     "id",
     "customer_name",
@@ -48,7 +50,12 @@ _SAFE = re.compile(r"[^A-Za-z0-9_.-]+")
 # ---------------------------------------------------------------- personas
 
 
-def load_personas(path: str | Path = PERSONAS_PATH) -> list[dict[str, Any]]:
+def load_personas(
+    path: str | Path | None = None, *, scenario: str | None = None
+) -> list[dict[str, Any]]:
+    """Validated personas from `path`, else from the scenario pack (default personal_loan)."""
+    if path is None:
+        path = personas_path(scenario or DEFAULT_SCENARIO)
     data = yaml.safe_load(Path(path).read_text()) or {}
     personas = data.get("personas") or []
     seen: set[str] = set()
@@ -91,11 +98,11 @@ def _write_json(path: Path, data: Any) -> None:
 
 
 class SimState:
-    """results/<version>/sim_state.json: per-call status and timestamps."""
+    """results/<scenario>/<version>/sim_state.json: per-call status and timestamps."""
 
-    def __init__(self, path: Path, version: str):
+    def __init__(self, path: Path, version: str, scenario: str = DEFAULT_SCENARIO):
         self.path = path
-        self.data: dict[str, Any] = {"version": version, "calls": {}}
+        self.data: dict[str, Any] = {"version": version, "scenario": scenario, "calls": {}}
         if path.exists():
             try:
                 self.data = json.loads(path.read_text())
@@ -152,6 +159,8 @@ async def run_call(
             temperature=float(sim.get("customer_temperature", 0.8)),
             client=customer_client,
             lender_name=cfg.lender_name,
+            company_kind=cfg.scenario.company_kind,
+            product=cfg.product,
             before_request=limiter,
             usage=brain.state.usage.customer,
         )
@@ -200,10 +209,12 @@ async def run_sim(
     log=print,
 ) -> dict[str, str]:
     """Run every (persona, repeat) sequentially. Returns {call_id: stop_reason | "skipped"}."""
-    version = app.brain.prompt_version
-    layout = ResultsLayout(root=Path(results_dir or app.results_dir), version=version)
+    version, scenario = app.brain.prompt_version, app.scenario.id
+    layout = ResultsLayout(
+        root=Path(results_dir or app.results_dir), version=version, scenario=scenario
+    )
     layout.transcripts.mkdir(parents=True, exist_ok=True)
-    state = SimState(layout.sim_state, version)
+    state = SimState(layout.sim_state, version, scenario)
     if limiter is None:
         limiter = RateLimiter(float(app.sim.get("rpm", 8)))
     if agent_client is None or customer_client is None:
@@ -251,6 +262,7 @@ async def run_sim(
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m sim.simulate", description=__doc__.split("\n")[0])
+    ap.add_argument("--scenario", help="scenario pack id (default: env SCENARIO / config)")
     ap.add_argument("--version", help="prompt version (default: config brain.prompt_version)")
     ap.add_argument("--n", type=int, help="first N personas (default: config sim.persona_count)")
     ap.add_argument("--personas", help="comma-separated persona ids (overrides --n)")
@@ -265,23 +277,33 @@ def main(argv: list[str] | None = None) -> int:
         load_dotenv()
     except ImportError:
         pass
-    if not os.environ.get("DEEPSEEK_API_KEY"):
-        print("DEEPSEEK_API_KEY is not set (put it in .env)", file=sys.stderr)
+    # Setup checks first (all offline), so a bad scenario/prompt pairing fails before any call.
+    try:
+        app = load_config(prompt_version=args.version, scenario=args.scenario)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"bad config: {e}", file=sys.stderr)
         return 2
-
-    app = load_config(prompt_version=args.version)
-    if app.brain.prompt_version not in available_versions():
-        print(f"unknown prompt version {app.brain.prompt_version!r}", file=sys.stderr)
+    version, scenario = app.brain.prompt_version, app.scenario.id
+    if version not in available_versions():
+        print(f"unknown prompt version {version!r}", file=sys.stderr)
+        return 2
+    try:  # v1/v2 are personal_loan-only and raise ValueError for other scenarios
+        build_system_prompt(app.brain, app.brain.default_customer_name, version)
+    except (ValueError, KeyError) as e:
+        print(f"prompt {version} cannot be used with scenario {scenario!r}: {e}", file=sys.stderr)
         return 2
     ids = [s.strip() for s in args.personas.split(",") if s.strip()] if args.personas else None
     n = args.n if args.n is not None else app.sim.get("persona_count")
     try:
-        personas = select_personas(load_personas(), n, ids)
+        personas = select_personas(load_personas(scenario=scenario), n, ids)
     except (ValueError, KeyError, OSError) as e:
         print(f"bad persona selection: {e}", file=sys.stderr)
         return 2
+    if not os.environ.get("DEEPSEEK_API_KEY"):
+        print("DEEPSEEK_API_KEY is not set (put it in .env)", file=sys.stderr)
+        return 2
     print(
-        f"sim {app.brain.prompt_version}: {len(personas)} personas x {args.repeats} "
+        f"sim {scenario}/{version}: {len(personas)} personas x {args.repeats} "
         f"(rpm={app.sim.get('rpm')}, max_turns={app.sim.get('max_turns')})"
     )
     outcome = asyncio.run(

@@ -1,0 +1,49 @@
+{
+  "call_id": "fx_card_01",
+  "mode": "text",
+  "prompt_version": "v3",
+  "agent_model": "deepseek-flash",
+  "scenario": "credit_card_upgrade",
+  "persona_id": "fixture",
+  "customer_name": "Arjun Malhotra",
+  "started_at": 0.0,
+  "ended_at": 6.0,
+  "stop_reason": "agent_ended",
+  "turns": [
+    {
+      "role": "agent",
+      "text": "Namaste, main Priya bol rahi hoon, Udaan Bank ki taraf se AI assistant. Kya meri baat Arjun Malhotra ji se ho rahi hai?",
+      "ts": 1.0
+    },
+    {
+      "role": "customer",
+      "text": "Mere paas already ek card hai, aur dusra card nahi chahiye.",
+      "ts": 2.0,
+      "sentiment": "calm"
+    },
+    {
+      "role": "agent",
+      "text": "Ji, yeh aapke existing card ka upgrade hai, extra card nahi.",
+      "ts": 3.0
+    },
+    {
+      "role": "customer",
+      "text": "Pehle hi karz hai, kharcha badh jayega. Not interested.",
+      "ts": 4.0,
+      "sentiment": "annoyed"
+    },
+    {
+      "role": "agent",
+      "text": "Bilkul, aapka current card waise hi rahega.",
+      "ts": 5.0
+    }
+  ],
+  "tool_calls": [],
+  "final_state": {
+    "consent": null,
+    "callback_time": null,
+    "dnc": false,
+    "ended": true,
+    "end_reason": "declined"
+  }
+}

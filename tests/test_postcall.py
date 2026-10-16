@@ -14,7 +14,7 @@ from brain.postcall import (
     write_postcall_records,
     write_voice_records,
 )
-from schemas import PostCallRecord, Transcript
+from schemas import PostCallRecord, ResultsLayout, Transcript
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_FIX = ROOT / "schemas" / "fixtures"
@@ -229,7 +229,7 @@ def test_extra_fixtures_validate() -> None:
 
 
 def _seed_results(tmp_path: Path) -> Path:
-    tdir = tmp_path / "results" / "v9" / "transcripts"
+    tdir = ResultsLayout(tmp_path / "results", "v9").transcripts  # results/personal_loan/v9
     tdir.mkdir(parents=True)
     for name in ("transcript.json", "transcript_dnc.json"):
         (tdir / name).write_text((SCHEMA_FIX / name).read_text(encoding="utf-8"))
@@ -239,7 +239,7 @@ def _seed_results(tmp_path: Path) -> Path:
 def test_write_postcall_records(tmp_path: Path) -> None:
     results = _seed_results(tmp_path)
     assert write_postcall_records("v9", str(results)) == 2
-    out = results / "v9" / "postcall"
+    out = ResultsLayout(results, "v9").postcall
     files = sorted(p.name for p in out.glob("*.json"))
     assert files == ["fx000001.json", "fx000002.json"]
     for p in out.glob("*.json"):
@@ -276,3 +276,104 @@ def test_write_voice_records(tmp_path: Path) -> None:
     assert rec.mode == "voice"
     assert rec.disposition == "callback_requested"
     assert rec.objections == ["call_later"]
+
+
+# --- scenarios -------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("scenario", "text", "expected"),
+    [
+        ("health_insurance_renewal", "Itna premium? Bahut mehenga hai.", ["premium_too_high"]),
+        (
+            "health_insurance_renewal",
+            "Mere office se already group insurance hai.",
+            ["has_employer_cover"],
+        ),
+        (
+            "health_insurance_renewal",
+            "Pichli baar aapne claim reject kar diya tha.",
+            ["bad_claim_experience"],
+        ),
+        ("health_insurance_renewal", "Abhi busy hoon, baad mein call karo", ["call_later"]),
+        ("health_insurance_renewal", "Renew nahi karna mujhe.", ["not_interested"]),
+        ("health_insurance_renewal", "Where did you get my number?", ["number_source"]),
+        ("health_insurance_renewal", "प्रीमियम ज़्यादा है", ["premium_too_high"]),
+        ("health_insurance_renewal", "Rate bahut zyada hai", []),  # loan id not in this pack
+        ("health_insurance_renewal", "Yeh sab fraud hai", ["other"]),
+        ("credit_card_upgrade", "Annual fee bahut zyada hai yaar", ["annual_fee_high"]),
+        ("credit_card_upgrade", "Mere paas already doosra card hai", ["already_have_card"]),
+        (
+            "credit_card_upgrade",
+            "Pehle hi karz bahut hai, bill nahi bhar pa raha",
+            ["debt_concern"],
+        ),
+        ("credit_card_upgrade", "I'm not interested in an upgrade", ["not_interested"]),
+        ("credit_card_upgrade", "Number kahan se mila?", ["number_source"]),
+        ("credit_card_upgrade", "Pehle se ek loan chal raha hai", []),
+        ("credit_card_upgrade", "Haan, lounge access kitne hain?", []),
+        ("personal_loan", "Rate bahut zyada hai yaar", ["rate_too_high"]),
+        ("personal_loan", "Mujhe kam rate chahiye", ["rate_too_high"]),
+    ],
+)
+def test_detect_objections_per_scenario(scenario: str, text: str, expected: list[str]) -> None:
+    assert detect_objections([text], scenario) == expected
+
+
+def test_scenario_ids_come_from_the_pack() -> None:
+    from brain.postcall import objection_patterns
+    from brain.scenario import load_scenario
+
+    for sid in ("personal_loan", "health_insurance_renewal", "credit_card_upgrade"):
+        ids = [o for o, _ in objection_patterns(sid)]
+        assert ids == [o.id for o in load_scenario(sid).objections]
+    # A ScenarioConfig object works too; unknown or unsafe ids fall back to the loan detectors.
+    assert detect_objections(["Annual fee zyada"], load_scenario("credit_card_upgrade")) == [
+        "annual_fee_high"
+    ]
+    assert detect_objections(["Rate bahut zyada"], "no_such_scenario") == ["rate_too_high"]
+    assert detect_objections(["Rate bahut zyada"], "../x") == ["rate_too_high"]
+
+
+def test_record_carries_scenario_and_objections() -> None:
+    t = _make(
+        [("Premium bahut mehenga hai", "annoyed"), ("Office ka mediclaim hai", "calm")],
+        end_reason="declined",
+    ).model_copy(update={"scenario": "health_insurance_renewal"})
+    rec = build_postcall_record(t, created_at=1.0)
+    assert rec.scenario == "health_insurance_renewal"
+    assert rec.objections == ["premium_too_high", "has_employer_cover"]
+    assert rec.summary == (
+        "Customer objected to the premium, mentioned employer health cover, declined the offer."
+    )
+    assert build_postcall_record(_make([("Haan", "calm")]), created_at=1.0).scenario == (
+        "personal_loan"
+    )
+
+
+def test_write_postcall_records_scenario_layout(tmp_path: Path) -> None:
+    results = tmp_path / "results"
+    layout = ResultsLayout(results, "v3", scenario="credit_card_upgrade")
+    layout.transcripts.mkdir(parents=True)
+    t = _make([("Annual fee zyada hai", "annoyed")], end_reason="declined", call_id="cc1")
+    t = t.model_copy(update={"scenario": "credit_card_upgrade", "prompt_version": "v3"})
+    (layout.transcripts / "cc1.json").write_text(t.model_dump_json())
+    assert write_postcall_records("v3", results) == 0  # default scenario: personal_loan
+    assert write_postcall_records("v3", results, scenario="credit_card_upgrade") == 1
+    rec = PostCallRecord.model_validate_json((layout.postcall / "cc1.json").read_text())
+    assert rec.scenario == "credit_card_upgrade" and rec.objections == ["annual_fee_high"]
+
+
+def test_cli_scenario(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    results = tmp_path / "results"
+    layout = ResultsLayout(results, "v3", scenario="health_insurance_renewal")
+    layout.transcripts.mkdir(parents=True)
+    t = _make([("Busy hoon", "calm")], call_id="hi1").model_copy(
+        update={"scenario": "health_insurance_renewal"}
+    )
+    (layout.transcripts / "hi1.json").write_text(t.model_dump_json())
+    argv = ["--scenario", "health_insurance_renewal", "--version", "v3", "--results", str(results)]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "wrote 1 record(s)" in out and str(layout.postcall) in out
+    assert main(["--scenario", "nope", "--version", "v3", "--results", str(results)]) == 2

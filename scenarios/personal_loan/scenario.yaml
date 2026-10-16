@@ -1,5 +1,6 @@
 # Scenario pack: outbound pitch for a pre-approved personal loan (fictional NBFC).
 # All figures here are the ONLY numbers the agent may state (prompt v3 + grounding rule).
+# Personas for the simulator live next to this file in personas.yaml.
 schema_version: 1
 id: personal_loan
 title: "Pre-approved personal loan"
@@ -22,12 +23,24 @@ product:
 compliance:
   callback_hours: [10, 19]
   disclosure_terms: ["AI", "Vriddhi"]
-  forbidden_claims: []
-  extra_rules: []
+  # Regexes matched (case-insensitive, negation-aware) against agent turns by
+  # score/scenario_rules.py. Approval guarantees are already covered by the core
+  # no_guaranteed_approval rule, so these only catch loan-specific misstatements.
+  forbidden_claims:
+    - "(no|zero) processing fee"
+    - "processing fee (bilkul |koi )?(nahi|nahin) (lagti|lagegi|lagega|hai|hogi)"
+    - "processing fee (bilkul )?(free|maaf|waived)"
+    - "no (documents?|paperwork|kyc) (required|needed|chahiye)"
+    - "(no|without|bina) (credit|cibil) check"
+    - "(same[- ]day|instant|turant) disbursal (guaranteed|pakka|confirmed)"
+  extra_rules:
+    - "The final rate, amount and approval depend on verification and documents; say so whenever you mention the offer."
+    - "Mention the processing fee whenever you discuss the cost of the loan; never call the loan free of charges."
+    - "Never pressure the customer to take more than they need or suggest borrowing to repay other debt without an executive's review."
 
 objections:
   - id: rate_too_high
-    cues: ["rate zyada", "rate bahut", "interest zyada", "mehenga", "costly", "rate is high", "bank ne kam", "10%"]
+    cues: ["rate zyada", "rate bahut", "interest zyada", "byaj zyada", "mehenga", "costly", "rate is high", "bank ne kam", "kam rate", "lower rate"]
     guidance: "Acknowledge; the range starts at the lowest band rate and depends on profile; offer an executive call to check their exact rate. Never match or promise a lower rate."
   - id: call_later
     cues: ["baad mein", "busy", "abhi nahi", "call later", "kal call", "meeting mein"]

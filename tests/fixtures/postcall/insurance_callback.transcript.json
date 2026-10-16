@@ -1,0 +1,66 @@
+{
+  "call_id": "fx_ins_01",
+  "mode": "text",
+  "prompt_version": "v3",
+  "agent_model": "deepseek-flash",
+  "scenario": "health_insurance_renewal",
+  "persona_id": "fixture",
+  "customer_name": "Anjali Mehra",
+  "started_at": 0.0,
+  "ended_at": 9.0,
+  "stop_reason": "agent_ended",
+  "turns": [
+    {
+      "role": "agent",
+      "text": "Namaste, main Priya bol rahi hoon, Kavach General Insurance ki taraf se AI assistant. Kya meri baat Anjali Mehra ji se ho rahi hai?",
+      "ts": 1.0
+    },
+    {
+      "role": "customer",
+      "text": "Haan bolo, lekin premium bahut mehenga lagta hai.",
+      "ts": 2.0,
+      "sentiment": "annoyed"
+    },
+    {
+      "role": "agent",
+      "text": "Ji, samajh gayi. Renewal premium aur no-claim bonus main bata sakti hoon.",
+      "ts": 3.0
+    },
+    {
+      "role": "customer",
+      "text": "Mere office se group insurance bhi hai.",
+      "ts": 4.0,
+      "sentiment": "calm"
+    },
+    {
+      "role": "agent",
+      "text": "Achha, office cover job badalne par khatam ho sakta hai. Kya executive aapse baat kar sakte hain?",
+      "ts": 5.0
+    },
+    {
+      "role": "customer",
+      "text": "Haan theek hai, executive call kar le.",
+      "ts": 6.0,
+      "sentiment": "interested"
+    },
+    {
+      "role": "agent",
+      "text": "Theek hai, kab call karein?",
+      "ts": 7.0
+    },
+    {
+      "role": "customer",
+      "text": "Kal 11 baje.",
+      "ts": 8.0,
+      "sentiment": "calm"
+    }
+  ],
+  "tool_calls": [],
+  "final_state": {
+    "consent": true,
+    "callback_time": "tomorrow 11:00",
+    "dnc": false,
+    "ended": true,
+    "end_reason": "callback_booked"
+  }
+}
