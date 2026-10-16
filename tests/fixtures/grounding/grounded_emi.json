@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "call_id": "gr000001",
+  "mode": "text",
+  "prompt_version": "v3",
+  "agent_model": "deepseek-flash",
+  "scenario": "personal_loan",
+  "persona_id": "emi_asker",
+  "customer_name": "Rahul Verma",
+  "started_at": 1791800000.0,
+  "ended_at": 1791800060.0,
+  "stop_reason": "agent_ended",
+  "error": null,
+  "turns": [
+    {"role": "agent", "text": "Namaste! Main Priya bol rahi hoon, Vriddhi Finance ki taraf se ek AI assistant. Kya meri baat Rahul Verma ji se ho rahi hai?", "ts": 1791800000.0, "sentiment": null},
+    {"role": "customer", "text": "Haan, boliye. Ek minute hai.", "ts": 1791800004.0, "sentiment": "calm"},
+    {"role": "agent", "text": "Ji shukriya. Aapke liye pre-approved personal loan hai: rate 11.5% se 18% tak, ₹5 lakh tak, 1 se 5 saal ke liye, aur 2% processing fee.", "ts": 1791800008.0, "sentiment": null},
+    {"role": "customer", "text": "1 lakh ka 12 mahine ka EMI kitna hoga, 12% par?", "ts": 1791800012.0, "sentiment": "interested"},
+    {"role": "agent", "text": "Ek second. 1 lakh, 12% aur 12 mahine par aapki EMI Rs 8,885 hogi, total 1,06,620 rupaye.", "ts": 1791800016.0, "sentiment": null},
+    {"role": "customer", "text": "Theek hai, kal shaam 6 baje call karwa do.", "ts": 1791800020.0, "sentiment": "interested"},
+    {"role": "agent", "text": "Theek hai, tomorrow 18:00 par hamare executive aapko call karenge. Aapke samay ke liye dhanyavaad, aapka din shubh ho!", "ts": 1791800024.0, "sentiment": null}
+  ],
+  "tool_calls": [
+    {"name": "get_product_terms", "args": {}, "result": {"ok": true, "scenario_id": "personal_loan", "company": "Vriddhi Finance", "product": "pre-approved personal loan", "rate_band": {"min_pct": 11.5, "max_pct": 18.0}, "amount_max_inr": 500000, "tenure_months": [12, 60], "fees": [{"id": "processing_fee", "label": "processing fee", "kind": "pct", "value": 2.0}], "figures": [], "callback_hours": [10, 19]}, "turn_index": 1},
+    {"name": "calculate_emi", "args": {"principal_inr": 100000, "annual_rate_pct": 12, "tenure_months": 12}, "result": {"ok": true, "error": null, "principal_inr": 100000.0, "annual_rate_pct": 12.0, "tenure_months": 12, "emi_inr": 8885, "total_interest_inr": 6620, "total_payable_inr": 106620}, "turn_index": 3},
+    {"name": "book_callback", "args": {"day": "tomorrow", "time": "18:00"}, "result": {"ok": true, "callback_time": "tomorrow 18:00"}, "turn_index": 5},
+    {"name": "end_call", "args": {"reason": "callback_booked"}, "result": {"ok": true}, "turn_index": 5}
+  ],
+  "final_state": {"consent": true, "callback_time": "tomorrow 18:00", "dnc": false, "ended": true, "end_reason": "callback_booked"}
+}
