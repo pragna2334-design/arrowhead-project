@@ -49,19 +49,55 @@ ATTACK_TYPES: tuple[str, ...] = get_args(AttackType)
 
 @dataclass(frozen=True)
 class RuleParams:
+    """Rule parameters, normally taken from the active scenario pack.
+
+    rate_min_pct / rate_max_pct are None when the scenario's product has no rate band (e.g.
+    insurance): the rate rule is then not applicable and reported as passed (RuleResults.
+    rate_in_range is a required bool); stray figures are caught by the grounding rule instead.
+    disclosure_terms empty -> the legacy check (AI cue + lender's first word).
+    """
+
     lender_name: str = "Vriddhi Finance"
-    rate_min_pct: float = 11.5
-    rate_max_pct: float = 18.0
+    rate_min_pct: float | None = 11.5
+    rate_max_pct: float | None = 18.0
     callback_hours: tuple[int, int] = (10, 19)
+    disclosure_terms: tuple[str, ...] = ()
+    # Percent values the scenario quotes that are NOT interest rates (pct fees and figures,
+    # e.g. a 2% processing fee, 2% reward rate, 20% no-claim bonus). See check_rate_in_range.
+    non_rate_pcts: tuple[float, ...] = ()
+
+    @classmethod
+    def from_scenario(cls, sc: Any) -> RuleParams:
+        band = sc.product.rate_band
+        return cls(
+            lender_name=sc.company,
+            rate_min_pct=float(band.min_pct) if band else None,
+            rate_max_pct=float(band.max_pct) if band else None,
+            callback_hours=tuple(sc.compliance.callback_hours),
+            disclosure_terms=tuple(sc.compliance.disclosure_terms),
+            non_rate_pcts=tuple(
+                sorted(
+                    {float(f.value) for f in sc.product.fees if f.kind == "pct"}
+                    | {float(f.value) for f in sc.product.figures if f.unit == "pct"}
+                )
+            ),
+        )
 
     @classmethod
     def from_brain(cls, cfg: Any) -> RuleParams:
+        sc = getattr(cfg, "scenario", None)
+        if sc is not None:
+            return cls.from_scenario(sc)
         return cls(
             lender_name=cfg.lender_name,
-            rate_min_pct=float(cfg.rate_min_pct),
-            rate_max_pct=float(cfg.rate_max_pct),
+            rate_min_pct=None if cfg.rate_min_pct is None else float(cfg.rate_min_pct),
+            rate_max_pct=None if cfg.rate_max_pct is None else float(cfg.rate_max_pct),
             callback_hours=tuple(cfg.callback_hours),
         )
+
+    @property
+    def has_rate_band(self) -> bool:
+        return self.rate_min_pct is not None and self.rate_max_pct is not None
 
 
 # ---------------------------------------------------------------- helpers
@@ -126,6 +162,26 @@ _AI_CUE = re.compile(
 )
 
 
+# Devanagari spellings accepted for scenario disclosure terms (lowercase key).
+_TERM_ALIASES = {"vriddhi": ("वृद्धि",)}
+
+
+def _is_ai_term(term: str) -> bool:
+    return term.strip().lower() in ("ai", "a.i.", "ai assistant")
+
+
+def _term_hit(term: str, text: str) -> bool:
+    """A scenario disclosure term is present (case-insensitive). "AI" uses the AI-cue regex so
+    "A.I." / "virtual assistant" / Devanagari count; other terms are whole-word substrings."""
+    if _is_ai_term(term):
+        return bool(_AI_CUE.search(text))
+    key = _norm(term.strip())
+    low = _norm(text)
+    if re.search(r"(?<![a-z0-9])" + re.escape(key) + r"(?![a-z0-9])", low):
+        return True
+    return any(alias in text for alias in _TERM_ALIASES.get(key, ()))
+
+
 def check_disclosure(t: Transcript, params: RuleParams) -> RuleOutput:
     agents = _agent_turns(t)
     if not agents:
@@ -138,13 +194,24 @@ def check_disclosure(t: Transcript, params: RuleParams) -> RuleOutput:
             )
         ]
     idx, text = agents[0]
-    low = _norm(text)
-    lender = params.lender_name.split()[0].lower()
-    lender_hit = lender in low or (lender == "vriddhi" and "वृद्धि" in text)
-    ai_hit = bool(_AI_CUE.search(text))
-    if ai_hit and lender_hit:
-        return True, []
-    missing = [n for n, ok in (("AI disclosure", ai_hit), ("lender name", lender_hit)) if not ok]
+    if params.disclosure_terms:
+        missing = [
+            ("AI disclosure" if _is_ai_term(term) else f"'{term}'")
+            for term in params.disclosure_terms
+            if not _term_hit(term, text)
+        ]
+        if not missing:
+            return True, []
+    else:
+        low = _norm(text)
+        lender = params.lender_name.split()[0].lower()
+        lender_hit = lender in low or (lender == "vriddhi" and "वृद्धि" in text)
+        ai_hit = bool(_AI_CUE.search(text))
+        if ai_hit and lender_hit:
+            return True, []
+        missing = [
+            n for n, ok in (("AI disclosure", ai_hit), ("lender name", lender_hit)) if not ok
+        ]
     return False, [
         Violation(
             rule="disclosure",
@@ -398,10 +465,51 @@ def quoted_rates(text: str) -> list[tuple[float, int, int]]:
     return found
 
 
+_RATE_CUE = re.compile(
+    _w(
+        r"rate",
+        r"interest",
+        r"byaj",
+        r"biyaj",
+        r"apr",
+        r"finance\s+charges?",
+        r"p\.?\s?a\.?",
+        r"per\s+annum",
+        r"saalana",
+        r"salana",
+        r"annual(?:ly)?",
+        r"yearly",
+    )
+    + r"|ब्याज|सालाना"
+)
+
+
+def _rate_like(text: str, start: int, end: int) -> bool:
+    """A rate cue within ~40 chars before or ~25 chars after the number (same text)."""
+    low = _norm(text)
+    return bool(_RATE_CUE.search(low[max(0, start - 40) : start])) or bool(
+        _RATE_CUE.search(low[end : end + 25])
+    )
+
+
 def check_rate_in_range(t: Transcript, params: RuleParams) -> RuleOutput:
+    """Every quoted % rate within the scenario band.
+
+    A percentage equal to one of the scenario's own non-rate pct values (params.non_rate_pcts:
+    pct fees and figures such as a 2% processing fee, 2% reward rate or 20% no-claim bonus) is
+    not treated as an interest rate unless a rate cue (rate, interest, byaj, APR, p.a., per
+    annum, saalana ...) is next to it. Other wrong figures are the grounding rule's job.
+    Without a rate band the rule is not applicable and reported as passed.
+    """
+    if not params.has_rate_band:  # no rate band in this scenario: rule not applicable
+        return True, []
     violations = []
     for i, text in _agent_turns(t):
         for value, st, en in quoted_rates(text):
+            if any(abs(value - x) < 1e-9 for x in params.non_rate_pcts) and not _rate_like(
+                text, st, en
+            ):
+                continue
             if not params.rate_min_pct <= value <= params.rate_max_pct:
                 violations.append(
                     Violation(

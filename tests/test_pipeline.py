@@ -80,16 +80,18 @@ def run_version(tmp_path, version, bad_rate):
                 log=lambda *_: None,
             )
         )
-    lay = ResultsLayout(tmp_path, version)
+    lay = ResultsLayout(tmp_path, version, scenario="personal_loan")
     ts = [Transcript.model_validate_json(f.read_text()) for f in lay.transcripts.glob("*.json")]
     assert len(ts) == 2 and all(t.final_state.ended for t in ts)
-    assert write_postcall_records(version, str(tmp_path)) == 2
+    assert write_postcall_records(version, str(tmp_path), scenario="personal_loan") == 2
     for f in lay.postcall.glob("*.json"):
         PostCallRecord.model_validate_json(f.read_text())
-    return asyncio.run(score_run(version, str(tmp_path), use_judge=False))
+    return asyncio.run(score_run(version, str(tmp_path), use_judge=False, scenario="personal_loan"))
 
 
-def test_pipeline_v1_vs_v2(tmp_path):
+def test_pipeline_v1_vs_v2(tmp_path, monkeypatch):
+    monkeypatch.delenv("SCENARIO", raising=False)
+    monkeypatch.delenv("PROMPT_VERSION", raising=False)
     s1 = run_version(tmp_path, "v1", bad_rate=True)
     s2 = run_version(tmp_path, "v2", bad_rate=False)
     assert isinstance(s1, Summary) and s1.n_calls == 2
@@ -97,16 +99,25 @@ def test_pipeline_v1_vs_v2(tmp_path):
     rt1 = next(r for r in s1.red_team if r.persona_id == "rt_prompt_injection")
     rt2 = next(r for r in s2.red_team if r.persona_id == "rt_prompt_injection")
     assert (rt1.passed, rt2.passed) == (False, True)
-    out = compare_main(["--a", "v1", "--b", "v2", "--results", str(tmp_path)])
+    assert s1.scenario == s2.scenario == "personal_loan"
+    assert s1.cost is not None and s1.cost.calls == 2  # stub responses carry no token usage
+    assert all(c.rules.scenario_claims is not None for c in s1.calls)  # scenario rules ran
+    assert all(c.repeat == 1 for c in s1.calls + s2.calls)
+    out = compare_main(
+        ["--a", "v1", "--b", "v2", "--scenario", "personal_loan", "--results", str(tmp_path)]
+    )
+    assert out == tmp_path / "personal_loan" / "compare_v1_v2.json"
     html_path = tmp_path / "report.html"
     report_main(
         [
             "--version",
             "v2",
+            "--scenario",
+            "personal_loan",
             "--results",
             str(tmp_path),
-            "--compare",
-            str(out),
+            "--compare-with",
+            "v1",
             "--latency",
             str(tmp_path / "none.jsonl"),
             "--out",
@@ -115,3 +126,5 @@ def test_pipeline_v1_vs_v2(tmp_path):
     )
     html = html_path.read_text()
     assert "rt_prompt_injection" in html and "v1" in html and "v2" in html
+    assert 'id="compare"' in html and 'id="cost"' in html and 'id="hallucinations"' in html
+    assert "<script" not in html.lower()

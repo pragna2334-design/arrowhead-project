@@ -94,3 +94,26 @@ def latency_bullet(p50: float | None, p95: float | None, target: float, scale_ma
 
 def _ms(v: float | None) -> str:
     return "n/a" if v is None else f"{v:.0f} ms"
+
+
+def stacked_bar(parts: list[tuple[str, float, int]], title: str) -> str:
+    """One horizontal 100% stacked bar. parts: (label, value, colour index 0-4 -> class segN).
+
+    Segment widths are shares of the total; zero segments are skipped."""
+    total = sum(max(0.0, v) for _, v, _ in parts)
+    segs, x = [], 0.0
+    for label, value, idx in parts:
+        if total <= 0 or value <= 0:
+            continue
+        w = value / total * 100
+        segs.append(
+            f'<rect class="seg{idx}" x="{x:.3f}%" y="2" width="{w:.3f}%" height="22">'
+            f"<title>{_e(label)}: {w:.1f}%</title></rect>"
+        )
+        x += w
+    if not segs:
+        segs.append('<rect class="track" x="0" y="2" width="100%" height="22" rx="4"/>')
+    return (
+        f'<svg class="stacked" width="100%" height="26" role="img" aria-label="{_e(title)}">'
+        f"<title>{_e(title)}</title>{''.join(segs)}</svg>"
+    )

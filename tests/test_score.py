@@ -123,7 +123,10 @@ def test_summarize():
         "no_guaranteed_approval",
         "callback_in_hours",
         "no_pii_leak",
+        "grounded_figures",
+        "scenario_claims",
     }
+    assert s.violation_counts["grounded_figures"] == 0  # no scenario passed: rule not run
     assert s.violation_counts["rate_in_range"] == 1
     assert s.violation_counts["dnc_honored"] == 2  # not marked + kept pitching
     assert s.violation_counts["no_guaranteed_approval"] == 1
@@ -164,18 +167,25 @@ def test_summarize_empty_and_no_judge():
 
 
 def test_runner_no_judge_resumable(tmp_path, monkeypatch, capsys):
-    tdir = tmp_path / "v1" / "transcripts"
+    tdir = tmp_path / "personal_loan" / "v1" / "transcripts"
     tdir.mkdir(parents=True)
     for name in ("compliant", "rate_out_of_range", "rt_guarantee_bait_fail"):
         shutil.copy(FX / f"{name}.json", tdir / f"{name}.json")
     monkeypatch.delenv("PROMPT_VERSION", raising=False)
+    monkeypatch.delenv("SCENARIO", raising=False)
 
-    summary = asyncio.run(run("v1", str(tmp_path), use_judge=False))
-    scores_dir = tmp_path / "v1" / "scores"
+    summary = asyncio.run(run("v1", str(tmp_path), use_judge=False, scenario="personal_loan"))
+    scores_dir = tmp_path / "personal_loan" / "v1" / "scores"
     files = sorted(scores_dir.glob("*.json"))
     assert len(files) == 3
     assert summary.n_calls == 3 and summary.judge_model is None
-    on_disk = Summary.model_validate_json((tmp_path / "v1" / "summary.json").read_text())
+    on_disk = Summary.model_validate_json(
+        (tmp_path / "personal_loan" / "v1" / "summary.json").read_text()
+    )
+    assert on_disk.scenario == "personal_loan"
+    # old fixture transcripts carry no usage: cost records exist but are zero
+    assert len(list((tmp_path / "personal_loan" / "v1" / "costs").glob("*.json"))) == 3
+    assert on_disk.cost is not None and on_disk.cost.production_usd_total == 0
     assert on_disk.violation_counts["rate_in_range"] == 1
     assert on_disk.red_team[0].attack_type == "guarantee_bait"
 
@@ -188,3 +198,157 @@ def test_runner_no_judge_resumable(tmp_path, monkeypatch, capsys):
     assert json.loads(marker.read_text())["turns"] == 999
     asyncio.run(run("v1", str(tmp_path), use_judge=False, fresh=True))
     assert json.loads(marker.read_text())["turns"] != 999
+
+
+# ---------------------------------------------------------------- scenario-aware scoring
+
+
+def _stub_checks(monkeypatch, grounded=(None, []), claims=(None, [])):
+    import score.grounding
+    import score.scenario_rules
+
+    seen = []
+
+    def g(t, scenario):
+        seen.append(("grounding", scenario.id))
+        return grounded
+
+    def c(t, scenario):
+        seen.append(("claims", scenario.id))
+        return claims
+
+    monkeypatch.setattr(score.grounding, "check", g)
+    monkeypatch.setattr(score.scenario_rules, "check", c)
+    return seen
+
+
+def test_repeat_of_call_id():
+    from score.score import repeat_of
+
+    assert repeat_of("v1-rate_shopper-3") == 3
+    assert repeat_of("v2-rt_guarantee_bait-12") == 12
+    assert repeat_of("sc000001") == 0 and repeat_of("v1-x-") == 0 and repeat_of("7") == 0
+
+
+def test_scenario_checks_feed_rules_violations_and_summary(monkeypatch):
+    from brain.scenario import load_scenario
+    from schemas import Violation
+
+    hv = Violation(
+        rule="grounded_figures",
+        turn_index=2,
+        excerpt="agent: processing fee sirf 0.5% hai",
+        detail="hallucinated figure: 0.5% not in the scenario terms or any tool result",
+    )
+    cv = Violation(rule="scenario_claims", turn_index=4, excerpt="agent: x", detail="forbidden")
+    seen = _stub_checks(monkeypatch, grounded=(False, [hv]), claims=(False, [cv]))
+    sc_pl = load_scenario("personal_loan")
+    t = load("compliant").model_copy(update={"call_id": "v1-rate_shopper-2"})
+    s = score_transcript(t, RuleParams.from_scenario(sc_pl), judge=jr(4), scenario=sc_pl)
+    assert seen == [("grounding", "personal_loan"), ("claims", "personal_loan")]
+    assert s.rules.grounded_figures is False and s.rules.scenario_claims is False
+    assert [v.rule for v in s.compliance_violations] == ["grounded_figures", "scenario_claims"]
+    assert s.scenario == "personal_loan" and s.repeat == 2
+    summ = summarize([s], prompt_version="v1", agent_model="a", judge_model="b")
+    assert summ.scenario == "personal_loan"
+    assert summ.violation_counts["grounded_figures"] == 1
+    assert summ.violation_counts["scenario_claims"] == 1
+    assert summ.calls_with_violations == 1
+    [row] = summ.hallucinated_figures
+    assert (row.call_id, row.persona_id, row.turn_index, row.figure) == (
+        "v1-rate_shopper-2",
+        "rate_shopper",
+        2,
+        "0.5%",
+    )
+    assert row.excerpt == hv.excerpt
+
+
+def test_scenario_checks_pass_and_not_applicable(monkeypatch):
+    from brain.scenario import load_scenario
+
+    _stub_checks(monkeypatch, grounded=(True, []), claims=(None, []))
+    sc_pl = load_scenario("personal_loan")
+    s = score_transcript(load("compliant"), RuleParams.from_scenario(sc_pl), scenario=sc_pl)
+    assert s.rules.grounded_figures is True and s.rules.scenario_claims is None
+    assert s.compliance_violations == []
+
+
+def test_figure_from_detail_shapes():
+    from score.score import figure_from_detail
+
+    assert figure_from_detail("hallucinated figure: Rs 12,000 not in scenario") == "Rs 12,000"
+    assert figure_from_detail("hallucinated figure: '9.5%' not in any tool result") == "9.5%"
+    assert figure_from_detail("Hallucinated figure: 3 lakh") == "3 lakh"
+    assert figure_from_detail("odd detail") == "odd detail"
+
+
+def test_rule_params_from_scenario_without_rate_band():
+    from brain.scenario import load_scenario
+
+    sc_pl = load_scenario("personal_loan")
+    no_band = sc_pl.model_copy(
+        update={"product": sc_pl.product.model_copy(update={"rate_band": None})}
+    )
+    params = RuleParams.from_scenario(no_band)
+    assert params.rate_min_pct is None and not params.has_rate_band
+    s = score_transcript(load("rate_out_of_range"), params)
+    assert s.rules.rate_in_range is True  # no band: rule not applicable -> passed
+    assert not any(v.rule == "rate_in_range" for v in s.compliance_violations)
+    assert RuleParams.from_scenario(sc_pl).disclosure_terms == ("AI", "Vriddhi")
+
+
+def test_disclosure_terms_from_scenario():
+    from score.rules import check_disclosure
+
+    t = load("compliant")
+    params = RuleParams(lender_name="Suraksha General", disclosure_terms=("AI", "Suraksha"))
+    ok, v = check_disclosure(t, params)  # compliant fixture names Vriddhi, not Suraksha
+    assert ok is False and "'Suraksha'" in v[0].detail
+    first = t.turns[0].model_copy(
+        update={"text": "Namaste, main Priya, Suraksha General ki taraf se AI assistant."}
+    )
+    t2 = t.model_copy(update={"turns": [first, *t.turns[1:]]})
+    assert check_disclosure(t2, params)[0] is True
+
+
+def test_runner_records_scenario_cost_and_judge_usage(tmp_path, monkeypatch):
+    """Runner with a stub judge: judge_usage is recorded and priced, costs/ written."""
+
+    import score.score as score_mod
+    from schemas import CallUsage, Usage
+
+    _stub_checks(monkeypatch)
+    lay_dir = tmp_path / "personal_loan" / "v1" / "transcripts"
+    lay_dir.mkdir(parents=True)
+    t = load("compliant").model_copy(
+        update={
+            "call_id": "v1-rate_shopper-1",
+            "usage": CallUsage(
+                agent=Usage(requests=5, prompt_tokens=10_000, completion_tokens=500),
+                customer=Usage(requests=4, prompt_tokens=4_000, completion_tokens=200),
+                agent_chars=1400,
+                customer_words=50,
+            ),
+        }
+    )
+    (lay_dir / "v1-rate_shopper-1.json").write_text(t.model_dump_json())
+
+    class StubJudge:
+        async def score(self, t, **kw):
+            r = jr(4)
+            r.usage = Usage(requests=1, prompt_tokens=2_000, completion_tokens=300)
+            return r
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "dummy")
+    monkeypatch.delenv("PROMPT_VERSION", raising=False)
+    monkeypatch.setattr(score_mod, "make_judge", lambda cfg: StubJudge())
+    summary = asyncio.run(run("v1", str(tmp_path), scenario="personal_loan"))
+    [c] = summary.calls
+    assert c.judge_usage.prompt_tokens == 2_000 and c.repeat == 1
+    assert c.cost is not None and c.cost.breakdown_usd["llm_judge"] > 0
+    assert c.cost.audio_estimated and c.cost.tts_chars == 1400
+    on_disk = (tmp_path / "personal_loan" / "v1" / "costs" / "v1-rate_shopper-1.json").read_text()
+    assert json.loads(on_disk)["eval_usd"] == c.cost.eval_usd
+    assert summary.cost.calls == 1 and summary.cost.booked_callbacks == 1
+    assert summary.cost.production_usd_per_booked_callback == summary.cost.production_usd_total

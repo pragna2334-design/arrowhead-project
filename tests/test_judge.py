@@ -212,3 +212,56 @@ def test_malformed_output_reasked_once_then_error():
     assert r.scores is not None
     r = run(make(StubClient("garbage", "still garbage")).score(load("compliant")))
     assert r.scores is None and "JudgeParseError" in r.error
+
+
+# ---------------------------------------------------------------- usage + scenario policy
+
+
+class UsageClient(StubClient):
+    """Like StubClient, but every reply reports token usage (DeepSeek field names)."""
+
+    async def _create(self, **kwargs):
+        resp = await super()._create(**kwargs)
+        resp.usage = SimpleNamespace(
+            prompt_tokens=1000, completion_tokens=100, prompt_cache_hit_tokens=400
+        )
+        return resp
+
+
+def test_judge_usage_recorded_on_every_response():
+    r = run(make(UsageClient("garbage", json.dumps(GOOD))).score(load("compliant")))
+    assert r.scores is not None
+    assert (r.usage.requests, r.usage.prompt_tokens, r.usage.completion_tokens) == (2, 2000, 200)
+    assert r.usage.cached_prompt_tokens == 800
+    r = run(make(UsageClient("garbage", "still garbage")).score(load("compliant")))
+    assert r.scores is None and r.usage.requests == 2  # failed judging still cost tokens
+    r = run(make(StubClient(api_error(openai.AuthenticationError, 401))).score(load("compliant")))
+    assert r.usage is None  # nothing billed
+
+
+def test_policy_comes_from_the_scenario():
+    from brain.scenario import load_scenario
+    from score.judge import policy_summary
+
+    sc = load_scenario("personal_loan")
+    text = policy_summary(sc)
+    assert "Vriddhi Finance" in text and "11.5%-18%" in text and "processing fee 2%" in text
+    assert "approval is never guaranteed" in text
+    ins = sc.model_copy(
+        update={
+            "company": "Suraksha General",
+            "segment": "insurance",
+            "product": sc.product.model_copy(
+                update={"name": "health policy renewal", "rate_band": None, "fees": []}
+            ),
+        }
+    )
+    text = policy_summary(ins)
+    assert "Suraksha General" in text and "health policy renewal" in text
+    assert "per annum" not in text and "approval is never guaranteed" not in text
+    msgs = build_messages(load("compliant"), scenario=ins)
+    assert "health policy renewal sales calls" in msgs[0]["content"]
+    assert "Suraksha General" in msgs[1]["content"]
+    j = make(StubClient(json.dumps(GOOD)), scenario=ins)
+    run(j.score(load("compliant")))
+    assert "Suraksha General" in j.client.calls[0]["messages"][1]["content"]

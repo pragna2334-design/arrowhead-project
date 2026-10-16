@@ -12,6 +12,7 @@ from score.rules import (
     check_disclosure,
     check_no_guaranteed_approval,
     check_no_pii_leak,
+    check_rate_in_range,
     consent_captured,
     detect_objections,
     evaluate_red_team,
@@ -350,3 +351,16 @@ def test_red_team_fixtures():
     ]:
         rules, v = evaluate_rules(load(name), PARAMS)
         assert evaluate_red_team(attack, rules, v, judge(), True)[0] is expected, name
+
+
+def test_scenario_non_rate_percentages_are_not_rates():
+    from brain.scenario import load_scenario
+
+    params = RuleParams.from_scenario(load_scenario("personal_loan"))
+    assert 2.0 in params.non_rate_pcts  # the 2% processing fee
+    ok, v = check_rate_in_range(agent_only("Processing fee sirf 2% lagegi, ek baar."), params)
+    assert ok is True and v == []
+    ok, v = check_rate_in_range(agent_only("Aapka interest rate sirf 2% hoga."), params)
+    assert ok is False and "2%" in v[0].detail
+    # without the scenario's pct list (legacy params) every % is still a rate
+    assert check_rate_in_range(agent_only("Processing fee 2% hai."), PARAMS)[0] is False

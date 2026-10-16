@@ -1,10 +1,16 @@
-"""Build ONE self-contained static report.html from an eval run.
+"""Build ONE self-contained static report.html from one or more eval runs.
 
-    python -m report.build_report [--version v1] [--results results] [--compare PATH]
+    python -m report.build_report [--version v1] [--results results]
+                                  [--scenario ID | --all-scenarios]
+                                  [--compare PATH | --compare-with VERSION]
                                   [--latency logs/latency.jsonl] [--out report.html] [--demo]
 
-Inputs: results/<version>/summary.json (Summary, required), an optional Comparison JSON
-(results/compare_<a>_<b>.json) and an optional latency JSONL (LatencyRecord per line).
+Inputs: results/<scenario>/<version>/summary.json (Summary; one scenario, or every scenario
+that has results for --version with --all-scenarios), optional Comparison JSONs and an
+optional latency JSONL (LatencyRecord per line, voice only, filtered to --version).
+`--compare-with B` loads results/<scenario>/compare_<B>_<version>.json (or the reverse
+order) for every scenario; `--compare PATH` loads one Comparison and shows it under its
+scenario. Several scenarios are shown as CSS-only tabs (radio inputs + :checked).
 Output: a single HTML file with inline CSS and inline SVG only (no scripts, fonts or CDNs),
 so it works offline and when opened from disk. Every data string is HTML-escaped.
 """
@@ -12,16 +18,26 @@ so it works offline and when opened from disk. Every data string is HTML-escaped
 from __future__ import annotations
 
 import argparse
+import re
+import sys
 import time
+from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 from typing import get_args
 
 from pydantic import ValidationError
 
-from report.charts import hbar_rows, histogram_1_to_5, latency_bullet
+from report.charts import hbar_rows, histogram_1_to_5, latency_bullet, stacked_bar
 from report.stats import LatencySummary, load_latency, summarize_latency
-from schemas import Comparison, MetricDelta, ResultsLayout, Summary
+from schemas import (
+    Comparison,
+    HallucinatedFigureRow,
+    MetricDelta,
+    PersonaDiff,
+    ResultsLayout,
+    Summary,
+)
 from schemas.common import JudgeDim, RuleName
 
 OUTCOMES = ("callback_booked", "declined", "dnc", "incomplete")
@@ -30,20 +46,44 @@ JUDGE_DIMS: tuple[str, ...] = get_args(JudgeDim)
 DEFAULT_TARGET_MS = 500.0
 NO_LATENCY_MSG = "No voice latency data yet — run a voice call (make run-voice)"
 DEMO_BANNER = "DEMO DATA — synthetic, not real results"
+NS_TITLE = "not significant: the 95% CI of B − A includes 0, so treat this difference as noise"
 
 RULE_HELP = {
-    "disclosure": "AI + lender disclosed in the first agent turn",
+    "disclosure": "AI + company disclosed in the first agent turn (scenario disclosure terms)",
     "dnc_honored": "after a stop/DNC request: mark_do_not_call called and no further pitch",
-    "rate_in_range": "every quoted % rate within the configured range",
+    "rate_in_range": "every quoted % rate within the scenario's rate band (n/a without a band)",
     "no_guaranteed_approval": "no guaranteed / 100% / sure-shot approval language",
     "callback_in_hours": "every booked callback inside compliance hours",
     "no_pii_leak": "agent never states PII or asks for OTP/PAN/Aadhaar",
+    "grounded_figures": "every number the agent states matches a scenario value or tool result",
+    "scenario_claims": "no scenario-specific forbidden claim (scenario compliance rules)",
 }
 STAGE_LABELS = {
     "stt_ms": "STT (VAD stop → final transcript)",
     "llm_ttfb_ms": "LLM time to first token",
     "tts_ttfb_ms": "TTS time to first audio",
 }
+COST_PARTS = (  # key, label, production?
+    ("llm_agent", "Agent LLM", True),
+    ("stt", "Speech-to-text", True),
+    ("tts", "Text-to-speech", True),
+    ("llm_customer", "Simulated customer LLM", False),
+    ("llm_judge", "Judge LLM", False),
+)
+
+
+@dataclass(frozen=True)
+class ScenarioView:
+    """One scenario's tab: its summary, optional comparison and display names."""
+
+    summary: Summary
+    comparison: Comparison | None = None
+    title: str | None = None  # e.g. "Pre-approved personal loan"
+    company: str | None = None  # e.g. "Vriddhi Finance (an NBFC)"
+
+    @property
+    def id(self) -> str:
+        return self.summary.scenario
 
 
 # ---------------------------------------------------------------- formatting helpers
@@ -62,6 +102,10 @@ def num(x: float | None, digits: int = 2) -> str:
     return "—" if x is None else f"{x:.{digits}f}"
 
 
+def usd(x: float | None, digits: int = 4) -> str:
+    return "—" if x is None else f"${x:.{digits}f}"
+
+
 def ms(x: float | None) -> str:
     return "—" if x is None else f"{x:.0f} ms"
 
@@ -70,12 +114,21 @@ def fmt_ts(ts: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(ts))
 
 
+def safe_id(x: str) -> str:
+    """A string usable in id/for attributes and CSS selectors without escaping."""
+    return re.sub(r"[^a-z0-9_-]", "-", x.lower()) or "x"
+
+
 def pill(ok: bool | None, yes: str = "PASS", no: str = "FAIL") -> str:
     if ok is None:
         return '<span class="pill neutral">n/a</span>'
     if ok:
         return f'<span class="pill good"><span aria-hidden="true">✓</span> {e(yes)}</span>'
     return f'<span class="pill bad"><span aria-hidden="true">✕</span> {e(no)}</span>'
+
+
+def ns_badge() -> str:
+    return f'<span class="pill ns" title="{e(NS_TITLE)}">n.s.</span>'
 
 
 def section(sid: str, title: str, body: str, note: str = "") -> str:
@@ -123,39 +176,91 @@ def judge_distributions(s: Summary) -> dict[str, dict[str, int]]:
     return dist if any(sum(v.values()) for v in dist.values()) else {}
 
 
+def max_repeats(s: Summary) -> int | None:
+    counts: dict[str, int] = {}
+    for c in s.calls:
+        counts[c.persona_id or c.call_id] = counts.get(c.persona_id or c.call_id, 0) + 1
+    return max(counts.values()) if counts else None
+
+
+_FIGURE_RE = re.compile(r"hallucinated figure:?\s*(.+?)(?:\s+not\s+in\b|\s*$)", re.IGNORECASE)
+
+
+def hallucinated_rows(s: Summary) -> list[HallucinatedFigureRow]:
+    """Summary.hallucinated_figures; rebuilt from the per-call violations when absent."""
+    if s.hallucinated_figures:
+        return s.hallucinated_figures
+    rows = []
+    for c in s.calls:
+        for v in c.compliance_violations:
+            if v.rule == "grounded_figures":
+                m = _FIGURE_RE.search(v.detail)
+                rows.append(
+                    HallucinatedFigureRow(
+                        call_id=c.call_id,
+                        persona_id=c.persona_id,
+                        turn_index=v.turn_index,
+                        figure=(m.group(1).strip() if m else "") or v.detail,
+                        excerpt=v.excerpt,
+                    )
+                )
+    return rows
+
+
 # ---------------------------------------------------------------- sections
 
 
-def render_header(s: Summary, demo: bool, built_at: float) -> str:
+def render_header(views: list[ScenarioView], demo: bool, built_at: float) -> str:
     banner = (
         f'<div class="demo-banner" role="alert"><strong>{e(DEMO_BANNER)}</strong></div>'
         if demo
         else ""
     )
-    judge = s.judge_model or "not run"
+    versions = sorted({v.summary.prompt_version for v in views})
+    if len(views) == 1:
+        v = views[0]
+        eyebrow = f"{v.company or v.id} · Hinglish outbound voice sales agent (fictional company)"
+    else:
+        eyebrow = "Hinglish outbound voice sales agent · BFSI scenarios (fictional companies)"
     meta = [
+        ("Prompt version", ", ".join(versions)),
+        ("Scenarios", ", ".join(v.title or v.id for v in views)),
+        ("Calls", str(sum(v.summary.n_calls for v in views))),
+        ("Report generated", fmt_ts(built_at)),
+    ]
+    dl = "".join(f"<div><dt>{e(k)}</dt><dd>{e(val)}</dd></div>" for k, val in meta)
+    return (
+        f"{banner}<header><p class='eyebrow'>{e(eyebrow)}</p>"
+        f"<h1>Agent evaluation report — prompt {e(', '.join(versions))}</h1>"
+        f'<dl class="meta">{dl}</dl></header>'
+    )
+
+
+def render_scenario_card(v: ScenarioView, p: str) -> str:
+    s = v.summary
+    rep = max_repeats(s)
+    meta = [
+        ("Scenario", f"{v.title or s.scenario} ({s.scenario})"),
+        ("Company", v.company or "—"),
         ("Prompt version", s.prompt_version),
         ("Agent model", s.agent_model),
-        ("Judge model", judge),
+        ("Judge model", s.judge_model or "not run"),
         ("Calls", str(s.n_calls)),
+        *([("Calls per persona (max)", str(rep))] if rep else []),
         *(
             [("Errored calls (excluded)", f"{len(s.errored_calls)}: re-run make sim")]
             if s.errored_calls
             else []
         ),
         ("Eval run", fmt_ts(s.generated_at)),
-        ("Report generated", fmt_ts(built_at)),
     ]
-    dl = "".join(f"<div><dt>{e(k)}</dt><dd>{e(v)}</dd></div>" for k, v in meta)
+    dl = "".join(f"<div><dt>{e(k)}</dt><dd>{e(val)}</dd></div>" for k, val in meta)
     return (
-        f"{banner}<header><p class='eyebrow'>Vriddhi Finance (fictional NBFC) · "
-        f"Hinglish outbound loan-sales voice agent</p>"
-        f"<h1>Agent evaluation report — prompt {e(s.prompt_version)}</h1>"
-        f'<dl class="meta">{dl}</dl></header>'
+        f'<section id="{e(p)}scenario" class="scenario-card"><dl class="meta">{dl}</dl></section>'
     )
 
 
-def render_kpis(s: Summary, lat: LatencySummary | None, target: float) -> str:
+def render_kpis(s: Summary, lat: LatencySummary | None, target: float, p: str = "") -> str:
     rt = red_team_pass_rate(s)
     e2e = lat.stats["e2e_ms"].p50 if lat else None
     tiles = [
@@ -179,6 +284,12 @@ def render_kpis(s: Summary, lat: LatencySummary | None, target: float) -> str:
             if s.red_team
             else "no red-team calls",
             None if rt is None else rt == 1.0,
+        ),
+        (
+            "Cost per call",
+            usd(s.cost.production_usd_mean if s.cost else None),
+            "production estimate (agent LLM + STT + TTS)" if s.cost else "no cost data",
+            None,
         ),
         (
             "Voice e2e p50",
@@ -205,26 +316,26 @@ def render_kpis(s: Summary, lat: LatencySummary | None, target: float) -> str:
         )
     tiles_html = "".join(out)
     return (
-        f'<section id="kpis" aria-label="Headline KPIs"><div class="kpis">{tiles_html}</div>'
-        "</section>"
+        f'<section id="{e(p)}kpis" class="kpis-wrap" aria-label="Headline KPIs">'
+        f'<div class="kpis">{tiles_html}</div></section>'
     )
 
 
-def render_outcomes(s: Summary) -> str:
+def render_outcomes(s: Summary, p: str = "") -> str:
     keys = list(OUTCOMES) + [k for k in s.outcomes if k not in OUTCOMES]
     items = [
         (k, float(s.outcomes.get(k, 0)), f"{s.outcomes.get(k, 0)} ({pct(outcome_share(s, k))})")
         for k in keys
     ]
     return section(
-        "outcomes",
+        f"{p}outcomes",
         "Outcome distribution",
         hbar_rows(items),
         f"Final outcome of each of the {s.n_calls} simulated calls.",
     )
 
 
-def render_violations(s: Summary) -> str:
+def render_violations(s: Summary, p: str = "") -> str:
     counts = dict.fromkeys(RULES, 0) | dict(s.violation_counts)
     count_rows = [
         f"<tr><td><code>{e(r)}</code></td><td class='muted'>{e(RULE_HELP.get(r, ''))}</td>"
@@ -240,6 +351,11 @@ def render_violations(s: Summary) -> str:
                 f"<td class='num'>{e('—' if v.turn_index is None else v.turn_index)}</td>"
                 f"<td class='excerpt'>{e(v.excerpt)}</td><td>{e(v.detail)}</td></tr>"
             )
+    not_run = [
+        r
+        for r in ("grounded_figures", "scenario_claims")
+        if s.calls and all(getattr(c.rules, r) is None for c in s.calls)
+    ]
     body = (
         "<h3>Violations by rule</h3>"
         + table(["Rule", "What it checks", "Count"], count_rows)
@@ -251,13 +367,134 @@ def render_violations(s: Summary) -> str:
         f"(violation rate {pct(s.violation_rate)}). Rule checks are deterministic code, not "
         "the LLM judge. Excerpts are PII-redacted."
     )
-    return section("violations", "Compliance violations", body, note)
+    if not_run:
+        note += (
+            " Not applicable in every call (no figures stated / no scenario rules): "
+            + ", ".join(f"<code>{e(r)}</code>" for r in not_run)
+            + "."
+        )
+    return section(f"{p}violations", "Compliance violations", body, note)
 
 
-def render_judge(s: Summary) -> str:
+def render_hallucinations(s: Summary, p: str = "") -> str:
+    rows_data = hallucinated_rows(s)
+    rows = [
+        f"<tr><td><code>{e(r.call_id)}</code></td><td>{e(r.persona_id or '—')}</td>"
+        f"<td class='num'>{e('—' if r.turn_index is None else r.turn_index)}</td>"
+        f"<td class='num bad-text'>{e(r.figure)}</td><td class='excerpt'>{e(r.excerpt)}</td></tr>"
+        for r in rows_data
+    ]
+    checked = [c for c in s.calls if c.rules.grounded_figures is not None]
+    n_calls = len({r.call_id for r in rows_data})
+    if s.calls and not checked and not rows_data:
+        note = (
+            "The grounding rule did not apply to any call (no figures stated, or the rule was "
+            "not run for these results)."
+        )
+    else:
+        note = (
+            f"{len(rows_data)} hallucinated figure(s) in {n_calls} of {s.n_calls} calls "
+            f"({pct(n_calls / s.n_calls if s.n_calls else None)} of calls). Rule "
+            "<code>grounded_figures</code>: every number the agent states must match a "
+            "scenario value or a tool result (e.g. calculate_emi). Lower is better."
+        )
+    return section(
+        f"{p}hallucinations",
+        "Hallucinated figures",
+        table(["Call", "Persona", "Turn", "Figure stated", "Transcript excerpt"], rows),
+        note,
+    )
+
+
+def render_cost(s: Summary, p: str = "") -> str:
+    c = s.cost
+    if c is None:
+        return section(
+            f"{p}cost",
+            "Cost per call",
+            '<p class="empty">No cost data in this summary — re-run '
+            "<code>make score</code> to price the calls.</p>",
+        )
+    costed = [x.cost for x in s.calls if x.cost is not None]
+    estimated = sum(1 for x in costed if x.audio_estimated)
+    no_usage = sum(1 for x in costed if x.agent_usage.requests == 0 and x.tts_chars == 0)
+    prod_mean = c.production_usd_mean
+    eval_mean = c.eval_usd_total / c.calls if c.calls else 0.0
+    tiles = [
+        ("Production cost / call", usd(prod_mean), "agent LLM + STT + TTS (mean)"),
+        (
+            "Per booked callback",
+            usd(c.production_usd_per_booked_callback),
+            f"production total ÷ {c.booked_callbacks} booked callback(s)"
+            if c.booked_callbacks
+            else "no callback booked",
+        ),
+        ("Eval cost / call", usd(eval_mean), "production + simulated customer + judge"),
+        (
+            "Totals",
+            usd(c.production_usd_total, 2),
+            f"production over {c.calls} calls · eval {usd(c.eval_usd_total, 2)}",
+        ),
+    ]
+    tiles_html = "".join(
+        f'<div class="kpi"><div class="kpi-label">{e(lbl)}</div>'
+        f'<div class="kpi-value">{e(val)}</div><div class="kpi-sub">{e(sub)}</div></div>'
+        for lbl, val, sub in tiles
+    )
+    parts = [(lbl, c.breakdown_usd_mean.get(k, 0.0), i) for i, (k, lbl, _) in enumerate(COST_PARTS)]
+    total = sum(v for _, v, _ in parts)
+    rows = [
+        f"<tr><td><span class='sw seg{i}'></span> {e(lbl)}</td>"
+        f"<td>{'production' if prod else 'eval only'}</td>"
+        f"<td class='num'>{e(usd(c.breakdown_usd_mean.get(k, 0.0), 5))}</td>"
+        f"<td class='num'>{e(pct(c.breakdown_usd_mean.get(k, 0.0) / total if total else None))}"
+        "</td></tr>"
+        for i, (k, lbl, prod) in enumerate(COST_PARTS)
+    ]
+    pv = hbar_rows(
+        [
+            ("Production / call", prod_mean, usd(prod_mean)),
+            ("Eval / call", eval_mean, usd(eval_mean)),
+        ]
+    )
+    body = (
+        f'<div class="kpis">{tiles_html}</div>'
+        "<h3>Mean cost per call by component</h3>"
+        + stacked_bar(parts, "Mean cost per call by component")
+        + table(["Component", "Counts towards", "Mean / call", "Share"], rows, "cost")
+        + "<h3>Production vs eval cost per call</h3>"
+        + pv
+    )
+    notes = [
+        (
+            f"Estimated from token usage and audio with the config price table "
+            f"<code>{e(c.price_table)}</code> ({e(c.currency)}). Prices are placeholders: VERIFY "
+            "them against your provider dashboards/invoices before quoting these numbers."
+        ),
+        (
+            "Production cost excludes the simulated customer and the judge, which do not exist "
+            "in production."
+        ),
+    ]
+    if estimated:
+        notes.append(
+            f"Estimated audio: {estimated} of {len(costed)} calls are text-mode, so STT/TTS "
+            "seconds are estimated from words/characters (config <code>prices.estimate</code>)."
+        )
+    if no_usage:
+        notes.append(
+            f"{no_usage} call(s) have no recorded token usage (simulated before usage tracking) "
+            "and are counted as $0; re-simulate them for a real estimate."
+        )
+    return section(f"{p}cost", "Cost per call", body, " ".join(notes))
+
+
+def render_judge(s: Summary, p: str = "") -> str:
     dist = judge_distributions(s)
     if not dist and not s.judge_means:
-        return section("judge", "Judge scores", '<p class="empty">The LLM judge was not run.</p>')
+        return section(
+            f"{p}judge", "Judge scores", '<p class="empty">The LLM judge was not run.</p>'
+        )
     cards = []
     for d in JUDGE_DIMS:
         counts = dist.get(d, {})
@@ -278,25 +515,28 @@ def render_judge(s: Summary) -> str:
         "higher is better."
     )
     return section(
-        "judge", "Judge score distributions", f'<div class="grid4">{"".join(cards)}</div>', note
+        f"{p}judge",
+        "Judge score distributions",
+        f'<div class="grid4">{"".join(cards)}</div>',
+        note,
     )
 
 
-def render_personas(s: Summary) -> str:
+def render_personas(s: Summary, p: str = "") -> str:
     rt = red_team_ids(s)
     rows = []
-    for p in sorted(s.per_persona, key=lambda p: (p.persona_id in rt, p.persona_id)):
-        outs = ", ".join(f"{k} {v}" for k, v in sorted(p.outcomes.items()) if v)
-        tag = ' <span class="tag">red team</span>' if p.persona_id in rt else ""
-        cls = ' class="rt-row"' if p.persona_id in rt else ""
+    for row in sorted(s.per_persona, key=lambda r: (r.persona_id in rt, r.persona_id)):
+        outs = ", ".join(f"{k} {v}" for k, v in sorted(row.outcomes.items()) if v)
+        tag = ' <span class="tag">red team</span>' if row.persona_id in rt else ""
+        cls = ' class="rt-row"' if row.persona_id in rt else ""
         rows.append(
-            f"<tr{cls}><td><code>{e(p.persona_id)}</code>{tag}</td>"
-            f"<td class='num'>{p.calls}</td><td>{e(outs or '—')}</td>"
-            f"<td class='num {'bad-text' if p.violations else ''}'>{p.violations}</td>"
-            f"<td class='num'>{e(num(p.judge_mean))}</td></tr>"
+            f"<tr{cls}><td><code>{e(row.persona_id)}</code>{tag}</td>"
+            f"<td class='num'>{row.calls}</td><td>{e(outs or '—')}</td>"
+            f"<td class='num {'bad-text' if row.violations else ''}'>{row.violations}</td>"
+            f"<td class='num'>{e(num(row.judge_mean))}</td></tr>"
         )
     return section(
-        "personas",
+        f"{p}personas",
         "Per-persona breakdown",
         table(["Persona", "Calls", "Outcomes", "Violations", "Judge mean"], rows),
         f"{len(s.per_persona)} personas; red-team personas are tagged and listed last. "
@@ -304,7 +544,7 @@ def render_personas(s: Summary) -> str:
     )
 
 
-def render_red_team(s: Summary) -> str:
+def render_red_team(s: Summary, p: str = "") -> str:
     rows = [
         f"<tr><td><code>{e(r.persona_id)}</code></td><td>{e(r.attack_type)}</td>"
         f"<td><code>{e(r.call_id)}</code></td><td>{pill(r.passed)}</td><td>{e(r.reason)}</td></tr>"
@@ -313,12 +553,12 @@ def render_red_team(s: Summary) -> str:
     rate = red_team_pass_rate(s)
     note = (
         f"Pass rate {pct(rate)}. A call passes when the agent resisted the attack without any "
-        "compliance violation."
+        "relevant compliance violation."
         if s.red_team
         else "No red-team calls in this run."
     )
     return section(
-        "red-team",
+        f"{p}red-team",
         "Red-team results",
         table(["Persona", "Attack type", "Call", "Result", "Reason"], rows),
         note,
@@ -388,12 +628,55 @@ def render_latency(lat: LatencySummary | None, target: float) -> str:
 # ---------------------------------------------------------------- comparison
 
 
-def _verdict(delta: float, higher_better: bool | None, eps: float = 1e-9) -> str:
-    if abs(delta) <= eps:
-        return '<span class="muted">no change</span>'
+def _fmt(x: float, kind: str) -> str:
+    if kind == "pct":
+        return pct(x)
+    if kind == "count":
+        return f"{x:.0f}"
+    if kind == "usd":
+        return usd(x)
+    return num(x)
+
+
+def _fmt_ci(ci: tuple[float, float] | None, kind: str) -> str:
+    if ci is None:
+        return ""
+    lo, hi = ci
+    if kind == "pct":
+        txt = f"{lo * 100:.1f}–{hi * 100:.1f}%"
+    elif kind == "usd":
+        txt = f"${lo:.4f}–{hi:.4f}"
+    else:
+        txt = f"{lo:.2f}–{hi:.2f}"
+    return f'<br><span class="ci">95% CI {e(txt)}</span>'
+
+
+def _fmt_delta(m: MetricDelta, kind: str) -> str:
+    if kind == "pct":
+        d = f"{m.delta * 100:+.1f} pp"
+        ci = m.delta_ci95 and f"[{m.delta_ci95[0] * 100:+.1f}, {m.delta_ci95[1] * 100:+.1f}]"
+    elif kind == "count":
+        d, ci = f"{m.delta:+.0f}", None
+    elif kind == "usd":
+        d = f"{m.delta:+.4f} USD"
+        ci = m.delta_ci95 and f"[{m.delta_ci95[0]:+.4f}, {m.delta_ci95[1]:+.4f}]"
+    else:
+        d = f"{m.delta:+.2f}"
+        ci = m.delta_ci95 and f"[{m.delta_ci95[0]:+.2f}, {m.delta_ci95[1]:+.2f}]"
+    return e(d) + (f'<br><span class="ci">{e(ci)}</span>' if ci else "")
+
+
+def _verdict(m: MetricDelta, higher_better: bool | None, eps: float = 1e-9) -> str:
+    """Only a significant delta is called improved/regressed; n.s. is neutral, never coloured."""
+    if m.significant is False:
+        return ns_badge()
+    if m.significant is None:
+        if abs(m.delta) <= eps:
+            return '<span class="muted">no change</span>'
+        return '<span class="pill neutral" title="no confidence interval computed">no CI</span>'
     if higher_better is None:
-        return '<span class="muted">context-dependent</span>'
-    good = (delta > 0) == higher_better
+        return '<span class="muted">significant · context-dependent</span>'
+    good = (m.delta > 0) == higher_better
     return (
         '<span class="good-text">▲ improved</span>'
         if good
@@ -402,24 +685,26 @@ def _verdict(delta: float, higher_better: bool | None, eps: float = 1e-9) -> str
 
 
 def _delta_row(label: str, m: MetricDelta, kind: str, higher_better: bool | None) -> str:
-    if kind == "pct":
-        a, b, d = pct(m.a), pct(m.b), f"{m.delta * 100:+.1f} pp"
-    elif kind == "count":
-        a, b, d = f"{m.a:.0f}", f"{m.b:.0f}", f"{m.delta:+.0f}"
-    else:
-        a, b, d = num(m.a), num(m.b), f"{m.delta:+.2f}"
     better = {True: "higher", False: "lower", None: "neither"}[higher_better]
+    n = f"{m.n_a} / {m.n_b}" if m.n_a is not None and m.n_b is not None else "—"
+    verdict = (
+        '<span class="muted">count only — compare the rates</span>'
+        if kind == "count"
+        else _verdict(m, higher_better)
+    )
     return (
-        f"<tr><td>{label}</td><td class='num'>{e(a)}</td><td class='num'>{e(b)}</td>"
-        f"<td class='num'>{e(d)}</td><td class='muted'>{better}</td>"
-        f"<td>{_verdict(m.delta, higher_better)}</td></tr>"
+        f"<tr><td>{label}</td>"
+        f"<td class='num'>{e(_fmt(m.a, kind))}{_fmt_ci(m.a_ci95, kind)}</td>"
+        f"<td class='num'>{e(_fmt(m.b, kind))}{_fmt_ci(m.b_ci95, kind)}</td>"
+        f"<td class='num'>{_fmt_delta(m, kind)}</td><td class='num'>{e(n)}</td>"
+        f"<td class='muted'>{better}</td><td>{verdict}</td></tr>"
     )
 
 
 OUTCOME_BETTER = {"callback_booked": True, "declined": False, "dnc": None, "incomplete": False}
 
 
-def persona_change(d) -> str:
+def persona_change(d: PersonaDiff) -> str:
     """'improved' | 'regressed' | 'mixed' | 'same' from violations, outcome and judge mean."""
     signals = []
     if d.b_violations != d.a_violations:
@@ -438,14 +723,19 @@ def persona_change(d) -> str:
     return "mixed"
 
 
-def render_comparison(c: Comparison) -> str:
+def render_comparison(c: Comparison, p: str = "") -> str:
     a, b = e(c.a), e(c.b)
-    head = ["Metric", f"A ({c.a})", f"B ({c.b})", "Δ (B − A)", "Better", "Verdict"]
+    head = ["Metric", f"A ({c.a})", f"B ({c.b})", "Δ (B − A) [95% CI]", "n A / B", "Better"]
+    head.append("Verdict")
     rows = [
         _delta_row("Violation rate", c.violation_rate, "pct", False),
         _delta_row("Consent rate", c.consent_rate, "pct", True),
         _delta_row("Red-team pass rate", c.red_team_pass_rate, "pct", True),
     ]
+    if c.hallucinated_figure_rate is not None:
+        rows.append(
+            _delta_row("Calls with a hallucinated figure", c.hallucinated_figure_rate, "pct", False)
+        )
     rows += [
         _delta_row(f"Outcome share: <code>{e(k)}</code>", m, "pct", OUTCOME_BETTER.get(k))
         for k, m in c.outcomes.items()
@@ -454,6 +744,8 @@ def render_comparison(c: Comparison) -> str:
         _delta_row(f"Judge mean: {e(k.replace('_', ' '))}", m, "score", True)
         for k, m in c.judge_means.items()
     ]
+    if c.cost_per_call is not None:
+        rows.append(_delta_row("Production cost per call", c.cost_per_call, "usd", False))
     viol_rows = [
         _delta_row(f"<code>{e(k)}</code>", m, "count", False) for k, m in c.violation_counts.items()
     ]
@@ -492,6 +784,15 @@ def render_comparison(c: Comparison) -> str:
         if sa.n_calls != sb.n_calls
         else f" Both versions ran {sa.n_calls} calls."
     )
+    if c.repeats_per_persona:
+        size_note += f" Up to {c.repeats_per_persona} call(s) per persona."
+    notes_html = (
+        '<div class="stat-notes"><h3>Statistical notes</h3><ul>'
+        + "".join(f"<li>{e(n)}</li>" for n in c.notes)
+        + "</ul></div>"
+        if c.notes
+        else ""
+    )
     body = (
         '<div class="ab-head">'
         f'<div class="ab-card"><span class="ab-tag">A</span> prompt <strong>{a}</strong>'
@@ -500,14 +801,16 @@ def render_comparison(c: Comparison) -> str:
         f'<div class="ab-card"><span class="ab-tag">B</span> prompt <strong>{b}</strong>'
         f"<br><span class='muted'>{e(sb.agent_model)} · {sb.n_calls} calls · "
         f"{e(fmt_ts(sb.generated_at))}</span></div></div>"
-        "<h3>Headline metrics</h3>"
+        + notes_html
+        + "<h3>Headline metrics</h3>"
         + table(head, rows, "compare")
         + "<h3>Violation counts by rule</h3>"
         + table(head, viol_rows, "compare")
-        + f"<h3>Per-persona diff</h3><p class='note'>{e(summary_line)}. A persona improves when "
-        "it has fewer violations, newly books a callback, or its judge mean rises by ≥ 0.5; "
-        "the reverse is a regression; both at once is mixed. Regressions are listed first; "
-        "with repeats, the outcome is the most common one and violations are summed.</p>"
+        + f"<h3>Per-persona diff</h3><p class='note'>{e(summary_line)}. Descriptive only, not "
+        "significance-tested (a persona has only a few calls). A persona improves when it has "
+        "fewer violations, newly books a callback, or its judge mean rises by ≥ 0.5; the "
+        "reverse is a regression; both at once is mixed. Regressions are listed first; with "
+        "repeats, the outcome is the most common one and violations are summed.</p>"
         + table(
             [
                 "Persona",
@@ -524,11 +827,14 @@ def render_comparison(c: Comparison) -> str:
         )
     )
     note = (
-        f"A = {a}, B = {b}. Δ is B minus A (rates in percentage points). The "
-        "“Better” column says whether higher or lower is better for that metric; DNC share "
-        f"is context-dependent (honouring a stop request is correct).{e(size_note)}"
+        f"A = {a}, B = {b}. Δ is B minus A (rates in percentage points) with its 95% confidence "
+        "interval: Wilson per arm and Newcombe for the difference (rates), percentile bootstrap "
+        "(means). Only a difference whose interval excludes 0 is called improved or regressed; "
+        f"the rest are marked {ns_badge()} and are noise at this sample size. The “Better” "
+        "column says whether higher or lower is better; DNC share is context-dependent "
+        f"(honouring a stop request is correct).{e(size_note)}"
     )
-    return section("compare", f"Prompt comparison: {c.a} vs {c.b}", body, note)
+    return section(f"{p}compare", f"Prompt comparison: {c.a} vs {c.b}", body, note)
 
 
 def render_footer(target: float) -> str:
@@ -536,12 +842,15 @@ def render_footer(target: float) -> str:
         "<footer><h2>How this evaluation works</h2>"
         "<p>A text-mode simulator plays scripted customer personas (including red-team "
         "attackers, ids starting <code>rt_</code>) against the agent, using the same brain, "
-        "prompt and tools as the voice bot. Each transcript is then scored twice: deterministic "
-        "rule checks flag compliance violations (disclosure, DNC, rate range, guaranteed "
-        "approval, callback hours, PII), and a separate LLM judge (a different model from the "
-        "agent) scores four quality dimensions from 1 to 5 with a written reason. Per-call scores "
-        "are aggregated into a summary per prompt version, and two versions can be compared A/B. "
-        "Voice latency comes from live voice calls, not the simulator.</p>"
+        "prompt and tools as the voice bot, for each scenario pack (product, company and "
+        "compliance rules). Each transcript is then scored twice: deterministic rule checks "
+        "flag compliance violations (disclosure, DNC, rate range, guaranteed approval, callback "
+        "hours, PII, ungrounded figures, scenario-specific forbidden claims), and a separate LLM "
+        "judge (a different model from the agent) scores four quality dimensions from 1 to 5 "
+        "with a written reason. Per-call scores are aggregated into a summary per scenario and "
+        "prompt version, priced with the config price table, and two versions can be compared "
+        "A/B with confidence intervals. Voice latency comes from live voice calls, not the "
+        "simulator.</p>"
         "<h3>Definitions</h3><dl class='defs'>"
         "<dt>Violation rate</dt><dd>Calls with ≥ 1 rule violation ÷ all calls. "
         "Lower is better.</dd>"
@@ -550,6 +859,12 @@ def render_footer(target: float) -> str:
         "compliance hours.</dd>"
         "<dt>Red-team pass rate</dt><dd>Share of red-team calls where the agent resisted the "
         "attack.</dd>"
+        "<dt>Hallucinated figure</dt><dd>A number the agent stated that matches neither the "
+        "scenario's product terms nor any tool result.</dd>"
+        "<dt>Production cost</dt><dd>Agent LLM + speech-to-text + text-to-speech per call; "
+        "eval cost adds the simulated customer and the judge. Placeholder prices.</dd>"
+        "<dt>95% CI / n.s.</dt><dd>Confidence interval of a rate (Wilson), a difference of "
+        "rates (Newcombe) or a mean (bootstrap). n.s. = the interval of B − A includes 0.</dd>"
         "<dt>e2e_ms</dt><dd>User stops speaking (silence) → bot starts speaking; what the "
         "caller feels.</dd>"
         "<dt>pipeline_ms</dt><dd>STT final transcript → first TTS audio; our processing "
@@ -569,7 +884,8 @@ CSS = """
 --muted:#6b6a65;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--bar:#2a78d6;
 --bar2:#9ec5f4;--track:#f0efec;--good:#006300;--goodbg:#e3f3e3;--bad:#b42323;--badbg:#fbe7e7;
 --warn:#8a5a00;--warnbg:#fff3d6;--accent:#2a78d6;--banner:#8a5a00;--bannerbg:#fff3d6;
---rt:#f4f1ff;--code:#f0efec}
+--rt:#f4f1ff;--code:#f0efec;--s0:#2a78d6;--s1:#1a9e8f;--s2:#7b5cd6;--s3:#c98a1b;
+--s4:#d0567a}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;
 --bg:#0d0d0d;--surface:#1a1a19;--ink:#f0efec;--ink2:#c3c2b7;--muted:#a3a29b;--grid:#2c2c2a;
 --axis:#383835;--border:rgba(255,255,255,.10);--bar:#3987e5;--bar2:#1c5cab;--track:#262624;
@@ -600,7 +916,7 @@ margin-bottom:16px}
 .note{color:var(--ink2);margin:0 0 .8rem;font-size:.9rem}.muted{color:var(--muted)}
 .empty{color:var(--muted);font-style:italic}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
-#kpis{background:none;border:0;padding:0}
+.kpis-wrap{background:none;border:0;padding:0}
 .kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
 .kpi-label{color:var(--ink2);font-size:.85rem}.kpi-value{font-size:1.9rem;font-weight:650;
 line-height:1.2;margin:4px 0}.kpi-sub{color:var(--muted);font-size:.8rem}
@@ -650,11 +966,141 @@ padding:0 7px;font-weight:700;margin-right:4px}
 .defs dt{font-weight:600}.defs dd{margin:0;color:var(--ink2)}
 nav{font-size:.85rem;display:flex;flex-wrap:wrap;gap:4px 14px}
 nav a{color:var(--accent);text-decoration:none}nav a:hover{text-decoration:underline}
+.tab-input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.tab-labels{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:16px 0 0}
+.tab-caption{color:var(--muted);font-size:.85rem;margin-right:4px}
+.tab-labels label{cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:8px;
+background:var(--track);font-weight:600;font-size:.9rem;display:flex;flex-direction:column}
+.tab-sub{font-weight:400;font-size:.75rem;color:var(--muted)}
+.tab-panel{display:none}.panel-title{margin:16px 0 0;font-size:1.3rem}
+.scenario-card{padding:14px 20px}
+.pill.ns{color:var(--muted);background:var(--track);border:1px dashed var(--axis)}
+.ci{color:var(--muted);font-size:.78em;font-weight:400;white-space:nowrap}
+.stat-notes ul{margin:.2rem 0 .6rem;padding-left:1.2rem;font-size:.88rem;color:var(--ink2)}
+svg.stacked{display:block;margin:6px 0 10px}
+svg .seg0{fill:var(--s0)}svg .seg1{fill:var(--s1)}svg .seg2{fill:var(--s2)}svg .seg3{fill:var(--s3)}
+svg .seg4{fill:var(--s4)}.sw.seg0{background:var(--s0)}.sw.seg1{background:var(--s1)}
+.sw.seg2{background:var(--s2)}.sw.seg3{background:var(--s3)}.sw.seg4{background:var(--s4)}
+@media print{.tab-panel{display:block!important}.tab-labels{display:none}}
 @media (max-width:700px){.ab-head{grid-template-columns:1fr}
 .defs{grid-template-columns:1fr}.defs dd{margin-bottom:6px}h1{font-size:1.3rem}
 section,footer{padding:14px}.hbar-row{grid-template-columns:minmax(80px,8rem) 1fr auto}}
 @media print{section,footer{break-inside:avoid}}
 """
+
+
+def _nav(p: str, has_compare: bool, include_latency: bool) -> str:
+    items = [
+        ("outcomes", "Outcomes"),
+        ("violations", "Violations"),
+        ("hallucinations", "Hallucinated figures"),
+        ("cost", "Cost"),
+        ("judge", "Judge"),
+        ("personas", "Personas"),
+        ("red-team", "Red team"),
+    ]
+    if include_latency:
+        items.append(("latency", "Latency"))
+    if has_compare:
+        items.append(("compare", "A/B comparison"))
+    links = "".join(
+        f'<a href="#{e(("" if i == "latency" else p) + i)}">{e(t)}</a>' for i, t in items
+    )
+    return f'<nav aria-label="Sections">{links}</nav>'
+
+
+def render_scenario(
+    v: ScenarioView, lat: LatencySummary | None, target: float, p: str, single: bool
+) -> str:
+    s = v.summary
+    parts = [
+        render_scenario_card(v, p),
+        _nav(p, v.comparison is not None, include_latency=True),
+        render_kpis(s, lat, target, p),
+        render_outcomes(s, p),
+        render_violations(s, p),
+        render_hallucinations(s, p),
+        render_cost(s, p),
+        render_judge(s, p),
+        render_personas(s, p),
+        render_red_team(s, p),
+    ]
+    if single:
+        parts.append(render_latency(lat, target))
+    if v.comparison is not None:
+        parts.append(render_comparison(v.comparison, p))
+    return "".join(parts)
+
+
+def tab_css(ids: list[str]) -> str:
+    """Per-scenario :checked rules for the CSS-only tabs (ids are safe_id()-sanitised)."""
+    rules = []
+    for i in ids:
+        rules.append(
+            f"#tab-{i}:checked~.tab-panels #panel-{i}{{display:block}}"
+            f'#tab-{i}:checked~.tab-labels label[for="tab-{i}"]'
+            "{background:var(--surface);color:var(--accent);border-color:var(--accent)}"
+            f'#tab-{i}:focus-visible~.tab-labels label[for="tab-{i}"]'
+            "{outline:2px solid var(--accent);outline-offset:2px}"
+        )
+    return "\n".join(rules)
+
+
+def build_page(
+    views: list[ScenarioView],
+    latency: LatencySummary | None = None,
+    target_ms: float = DEFAULT_TARGET_MS,
+    demo: bool = False,
+    built_at: float | None = None,
+) -> str:
+    """Render the full report for one or more scenarios as one HTML string (no I/O)."""
+    if not views:
+        raise ValueError("no scenario results to report on")
+    if built_at is None:  # demo: pin to the data's timestamp so the committed file is stable
+        built_at = max(v.summary.generated_at for v in views) if demo else time.time()
+    single = len(views) == 1
+    parts = [render_header(views, demo, built_at)]
+    extra_css = ""
+    if single:
+        parts.append(render_scenario(views[0], latency, target_ms, "", True))
+    else:
+        ids = [safe_id(v.id) for v in views]
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"duplicate scenario ids: {[v.id for v in views]}")
+        inputs = "".join(
+            f'<input class="tab-input" type="radio" name="scenario" id="tab-{i}"'
+            f"{' checked' if n == 0 else ''}>"
+            for n, i in enumerate(ids)
+        )
+        labels = "".join(
+            f'<label for="tab-{i}">{e(v.title or v.id)}'
+            f'<span class="tab-sub">{e(v.summary.n_calls)} calls</span></label>'
+            for i, v in zip(ids, views, strict=True)
+        )
+        panels = "".join(
+            f'<div class="tab-panel" id="panel-{i}" role="region" '
+            f'aria-label="{e(v.title or v.id)}">'
+            f"<h2 class='panel-title'>{e(v.title or v.id)}</h2>"
+            f"{render_scenario(v, latency, target_ms, i + '-', False)}</div>"
+            for i, v in zip(ids, views, strict=True)
+        )
+        parts.append(
+            f'<div class="tabs" id="scenarios">{inputs}'
+            f'<div class="tab-labels" aria-label="Scenario">'
+            f'<span class="tab-caption">Scenario:</span>{labels}</div>'
+            f'<div class="tab-panels">{panels}</div></div>'
+        )
+        parts.append(render_latency(latency, target_ms))
+        extra_css = tab_css(ids)
+    parts.append(render_footer(target_ms))
+    versions = ", ".join(sorted({v.summary.prompt_version for v in views}))
+    title = f"{'[DEMO] ' if demo else ''}Agent Eval Report {versions}"
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f"<title>{e(title)}</title><style>{CSS}{extra_css}</style></head>"
+        f"<body><main>{''.join(parts)}</main></body></html>\n"
+    )
 
 
 def build_html(
@@ -665,41 +1111,20 @@ def build_html(
     demo: bool = False,
     built_at: float | None = None,
 ) -> str:
-    """Render the full report as one HTML string (pure function, no I/O)."""
-    if built_at is None:  # demo: pin to the data's timestamp so the committed file is stable
-        built_at = summary.generated_at if demo else time.time()
-    nav_items = [
-        ("outcomes", "Outcomes"),
-        ("violations", "Violations"),
-        ("judge", "Judge"),
-        ("personas", "Personas"),
-        ("red-team", "Red team"),
-        ("latency", "Latency"),
-    ]
-    if comparison is not None:
-        nav_items.append(("compare", "A/B comparison"))
-    nav = "".join(f'<a href="#{i}">{e(t)}</a>' for i, t in nav_items)
-    parts = [
-        render_header(summary, demo, built_at),
-        f'<nav aria-label="Sections">{nav}</nav>',
-        render_kpis(summary, latency, target_ms),
-        render_outcomes(summary),
-        render_violations(summary),
-        render_judge(summary),
-        render_personas(summary),
-        render_red_team(summary),
-        render_latency(latency, target_ms),
-    ]
-    if comparison is not None:
-        parts.append(render_comparison(comparison))
-    parts.append(render_footer(target_ms))
-    title = f"{'[DEMO] ' if demo else ''}Agent Eval Report {summary.prompt_version}"
-    return (
-        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"<title>{e(title)}</title><style>{CSS}</style></head>"
-        f"<body><main>{''.join(parts)}</main></body></html>\n"
-    )
+    """Single-scenario report (pure function, no I/O)."""
+    view = ScenarioView(summary, comparison, *scenario_names(summary.scenario))
+    return build_page([view], latency, target_ms, demo, built_at)
+
+
+def scenario_names(scenario_id: str) -> tuple[str | None, str | None]:
+    """(title, "Company (kind)") from the scenario pack; (None, None) if it can't be loaded."""
+    try:
+        from brain.scenario import load_scenario
+
+        sc = load_scenario(scenario_id)
+    except Exception:  # noqa: BLE001 - unknown/renamed scenario: fall back to the id
+        return None, None
+    return sc.title, f"{sc.company} ({sc.company_kind}, fictional)"
 
 
 def latency_target_ms() -> float:
@@ -721,6 +1146,15 @@ def default_results_dir() -> str:
         return "results"
 
 
+def default_scenario() -> str:
+    try:
+        from brain.config import load_config
+
+        return load_config().scenario.id
+    except Exception:  # noqa: BLE001
+        return "personal_loan"
+
+
 def _load(model, path: Path, hint: str):
     if not path.exists():
         raise SystemExit(f"error: {path} not found. {hint}")
@@ -728,6 +1162,22 @@ def _load(model, path: Path, hint: str):
         return model.model_validate_json(path.read_text(encoding="utf-8"))
     except ValidationError as exc:
         raise SystemExit(f"error: {path} does not match the {model.__name__} schema:\n{exc}")
+
+
+def discover_scenarios(root: Path, version: str) -> list[str]:
+    """Every scenario with results/<scenario>/<version>/summary.json, default scenario first."""
+    found = sorted(p.parent.parent.name for p in root.glob(f"*/{version}/summary.json"))
+    first = default_scenario()
+    return sorted(found, key=lambda s: (s != first, s))
+
+
+def find_comparison(root: Path, scenario: str, version: str, other: str) -> Path | None:
+    """compare_<other>_<version>.json (other = baseline A), else the reverse order."""
+    for a, b in ((other, version), (version, other)):
+        path = ResultsLayout(root, a, scenario=scenario).comparison(b)
+        if path.exists():
+            return path
+    return None
 
 
 def main(argv: list[str] | None = None) -> Path:
@@ -738,31 +1188,70 @@ def main(argv: list[str] | None = None) -> Path:
     ap.add_argument(
         "--results", default=None, help="results dir (default: config paths.results_dir)"
     )
+    who = ap.add_mutually_exclusive_group()
+    who.add_argument("--scenario", default=None, help="one scenario (default: config/env)")
+    who.add_argument(
+        "--all-scenarios",
+        action="store_true",
+        help="every scenario with results/<scenario>/<version>/summary.json",
+    )
     ap.add_argument("--compare", default=None, help="Comparison JSON for the A/B section")
+    ap.add_argument(
+        "--compare-with",
+        default=None,
+        metavar="A",
+        help="baseline version: load results/<scenario>/compare_<A>_<version>.json per scenario",
+    )
     ap.add_argument("--latency", default="logs/latency.jsonl", help="voice latency JSONL")
     ap.add_argument("--out", default="report.html", help="output HTML path")
     ap.add_argument("--demo", action="store_true", help="mark the report as synthetic demo data")
     args = ap.parse_args(argv)
 
-    layout = ResultsLayout(Path(args.results or default_results_dir()), args.version)
-    summary = _load(
-        Summary,
-        layout.summary,
-        f"Run `make eval` (PROMPT={args.version}) first to simulate and score the calls.",
-    )
-    comparison = None
-    if args.compare:
-        comparison = _load(
-            Comparison, Path(args.compare), "Run `make compare A=v1 B=v2` to create it."
+    root = Path(args.results or default_results_dir())
+    if args.all_scenarios:
+        scenarios = discover_scenarios(root, args.version)
+        if not scenarios:
+            raise SystemExit(
+                f"error: no {root}/<scenario>/{args.version}/summary.json found. Run `make eval` "
+                f"(PROMPT={args.version}) first to simulate and score the calls."
+            )
+    else:
+        scenarios = [args.scenario or default_scenario()]
+
+    summaries: dict[str, Summary] = {}
+    for sc in scenarios:
+        layout = ResultsLayout(root, args.version, scenario=sc)
+        summaries[sc] = _load(
+            Summary,
+            layout.summary,
+            f"Run `make eval` (PROMPT={args.version} SCENARIO={sc}) first to simulate and score "
+            "the calls.",
         )
+    comparisons: dict[str, Comparison] = {}
+    if args.compare_with:
+        for sc in scenarios:
+            path = find_comparison(root, sc, args.version, args.compare_with)
+            if path is None:
+                print(
+                    f"warning: no comparison {args.compare_with} vs {args.version} for {sc}; "
+                    f"run `make compare A={args.compare_with} B={args.version} SCENARIO={sc}`",
+                    file=sys.stderr,
+                )
+                continue
+            comparisons[sc] = _load(Comparison, path, "")
+    if args.compare:
+        comp = _load(Comparison, Path(args.compare), "Run `make compare A=v1 B=v2` to create it.")
+        target = comp.scenario if comp.scenario in summaries else scenarios[0]
+        comparisons[target] = comp
+    views = [
+        ScenarioView(summaries[sc], comparisons.get(sc), *scenario_names(sc)) for sc in scenarios
+    ]
     lat = summarize_latency(
         load_latency(Path(args.latency) if args.latency else None, version=args.version)
     )
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(
-        build_html(summary, comparison, lat, latency_target_ms(), args.demo), encoding="utf-8"
-    )
+    out.write_text(build_page(views, lat, latency_target_ms(), args.demo), encoding="utf-8")
     print(f"wrote {out}")
     return out
 
