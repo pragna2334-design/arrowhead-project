@@ -325,8 +325,8 @@ The full list is in [DECISIONS.md](DECISIONS.md), and the bug audits are in [AUD
 - **Stale comparisons.** A `compare_A_B.json` is not invalidated when you re-score; re-run
   `make compare` after `make score`.
 - **Devanagari disclosure.** The disclosure check matches company names in Roman script (plus
-  "Vriddhi" in Devanagari). With `brain.script: devanagari`, add the Devanagari company name to
-  the pack's `disclosure_terms` aliases.
+  "Vriddhi" in Devanagari). With `brain.script: devanagari`, the non-loan packs would fail
+  disclosure; keep `script: roman` for them.
 - **Sarvam buffering.** Sarvam buffers `min_buffer_size` characters (50 by default) on its side
   before synthesizing. That may delay a short first clause; try a lower value once verified
   (`tts.sarvam.min_buffer_size`).
