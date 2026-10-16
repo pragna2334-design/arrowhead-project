@@ -72,5 +72,51 @@ Items marked `VERIFY` need a live run with real keys. AUDIT.md lists the bugs fi
 - The demo report is pinned to the data timestamp — the committed file doesn't change on rebuild.
 - `demo/` is synthetic data, deterministic and clearly labelled (`demo-` ids, `-demo` models, `[demo]` text, a banner) — so anyone can see the report without keys, and it can't be mistaken for real results.
 
+## Round 3: scenarios, grounding, latency, cost, rigor
+
+### Contracts and prompts
+- Use-case settings moved from config.yaml into scenario packs (`scenarios/<id>/scenario.yaml`, validated by `schemas/scenario.py`); config.yaml keeps the global settings — adding a use case is a YAML change, not a code change.
+- Results layout is `results/<scenario>/<version>/` — scenarios never mix; no real results existed yet, so nothing needed migrating.
+- prompts/v1.md and v2.md are frozen: tests pin their file hashes and their rendered text (golden files captured before the refactor), and they refuse non-loan scenarios — a clean v1-vs-v2 comparison.
+- Prompt v3 = v2's hardening + scenario-generic placeholders + short acknowledgements + "figures only from tools"; it contains no offer numbers at all — the grounding rule then checks the model, not the prompt.
+- Grounding tools (`get_product_terms`, `calculate_emi`) are offered to every prompt version — the same tool set for v1/v2/v3 keeps the A/B fair; v1/v2 simply aren't told to use them.
+- `calculate_emi` is only offered when the scenario has `emi_enabled` (lending) — no EMI for insurance or cards.
+- Token usage is captured on every agent and customer response and stored on the transcript — enables cost per call without extra API calls.
+- Personal-loan values (company, band 11.5-18%, Rs 5,00,000, 12-60 months, 10:00-19:00, Rahul Verma) are pinned by tests — the scenario refactor can't silently change v1/v2 behaviour.
+
+### Grounded numbers
+- EMI uses reducing balance with Decimal and half-up rounding to the rupee; total payable = rounded EMI × months — exact and reproducible (1 lakh @ 12% for 12 months = Rs 8,885).
+- `calculate_emi` returns an error (never raises) for rates outside the band, amounts above the maximum or tenures outside the range — the tool itself can't quote off-band terms.
+- A figure is grounded if it matches any successful tool result in the call or a scenario value (unit-aware: 5 lakh = 500000, 5 saal = 60 months; pct ±0.05, rupees ±0.5, EMI ±1) — spec: "match a tool result or config value".
+- An echo of the customer's number is allowed only if the agent attributes it in the same sentence AND the customer said it earlier — stops invented competitor rates.
+- Times, dates, minutes, list numbers, unitless numbers < 100 and the fixed closing line are ignored — they aren't offer figures.
+- The rate rule ignores percentages equal to a scenario fee or figure (2% reward rate, 20% no-claim bonus) unless a rate word is next to them; with no rate band the rule passes — no false rate violations outside lending.
+
+### Scenarios
+- Three packs, one per Arrowhead segment: personal_loan (25 personas), health_insurance_renewal and credit_card_upgrade (15 each; 5 red-team per pack) — lending, insurance, cards.
+- Forbidden claims are scenario regexes (e.g. "no waiting period", "lifetime free", "claim guaranteed"), negation-aware, but a negation that is part of the claim itself never clears it — "no waiting period" is the claim.
+- personal_loan also got forbidden claims (no processing fee, no documents, guaranteed same-day disbursal) — this applies equally to v1 and v2, so the comparison stays fair.
+- Objection ids come from the scenario; the hand-tuned loan detectors are merged in for shared ids — loan detection quality is unchanged.
+
+### Latency
+- `brain.thinking` is validated (enabled|disabled only), and the bot logs the mode at startup — a typo can't silently turn reasoning on.
+- Clause streaming replaces Pipecat's sentence aggregator inside the TTS service (the same pattern Pipecat's Cartesia/Rime services use); it fails loudly if Pipecat internals change — keeps the latency observer's aggregation metric.
+- Clause rules: boundaries , ; : . ? ! । ॥ and spaced dashes; the first clause at 6+ characters, later ones at 20+; never split numbers/times/abbreviations — fast acknowledgement without choppy prosody.
+- Sarvam `min_buffer_size` stays at Pipecat's 50 until verified live — a lower value may speed the first clause but could be rejected by the API.
+- `make bench --aggregation sentence` uses Pipecat's own aggregator — an honest "before" number; TTS connect time is reported separately from TTS TTFB.
+
+### Cost and statistics
+- Production cost (agent LLM + STT + TTS) is separated from eval cost (+ simulated customer + judge) — only production cost says anything about unit economics.
+- Text-mode audio is estimated from text (14 chars/s TTS, 2.5 words/s STT); unknown prices count as 0 with a warning — the report never crashes on a missing price; all prices are placeholders to verify.
+- Costs are re-priced on every scoring run — price-table edits take effect without re-simulating or re-judging.
+- Rates use Wilson intervals, and differences use Newcombe's hybrid score; means use a seeded percentile bootstrap (2,000) — standard, stdlib-only, deterministic.
+- "Significant" = 95% CI of the difference excludes 0; everything else is n.s. and shown neutrally — no over-claiming.
+- Default `REPEATS` = config `compare.repeats` (3) — comparisons need several samples per persona; `REPEATS=1` for smoke runs.
+- Known caveats are stated in the report notes: correlated repeats, no multiple-comparison correction.
+
+### Report
+- Scenario tabs use radio inputs + CSS (no JavaScript); with one scenario the old flat layout is kept — works offline and from disk.
+- Latency is shown once per report (records carry no scenario).
+
 ## Not verified (needs live keys or a browser)
-DeepSeek model ids and JSON mode alongside the thinking setting; Deepgram `multi` on Hinglish; Sarvam pronunciation; the goodbye audio playing fully before hang-up (and the closing line reaching the voice transcript); real latency numbers; how the simulated customers behave; the report in a real browser.
+DeepSeek model ids and JSON mode alongside the thinking setting; whether `reasoning_content` appears with thinking disabled (`make bench` reports it); Sarvam `min_buffer_size` limits and clause prosody; prices; grounding false-positive rate on real v3 transcripts; how v3 handles the insurance and card packs; Deepgram `multi` on Hinglish; Sarvam pronunciation; the goodbye audio playing fully before hang-up (and the closing line reaching the voice transcript); real latency numbers; how the simulated customers behave; the report in a real browser.
